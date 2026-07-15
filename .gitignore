@@ -1,0 +1,8 @@
+node_modules/
+dist/
+frontend/dist/
+data/
+release/
+*.db
+.DS_Store
+Thumbs.db

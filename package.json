@@ -1,0 +1,61 @@
+{
+  "name": "sistema-tienda-abarrotes",
+  "version": "1.0.0",
+  "description": "Sistema de Tienda de Abarrotes - POS, Inventario y Contabilidad",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:server": "node server/index.js",
+    "dev:frontend": "cd frontend && npx vite build --watch",
+    "dev": "npm run dev:server & npm run dev:frontend",
+    "build:frontend": "cd frontend && npx vite build",
+    "build": "npm run build:frontend && npx electron-builder",
+    "start": "electron ."
+  },
+  "build": {
+    "appId": "com.tienda.abarrotes",
+    "productName": "Sistema Tienda de Abarrotes",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "server/**/*",
+      "frontend/dist/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/productos.xlsx",
+        "to": "productos.xlsx"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64", "ia32"]
+        }
+      ],
+      "icon": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true
+    }
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "sql.js": "^1.9.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "^24.13.3"
+  }
+}
