@@ -31,6 +31,20 @@ export default function App() {
   const [cashCountAmount, setCashCountAmount] = useState('')
   const [sessionToClose, setSessionToClose] = useState(null)
   const [error, setError] = useState('')
+  const [isOnline, setIsOnline] = useState(navigator.onLine)
+
+  // Checkpoint 1 de modo offline: el catálogo (productos/clientes) queda
+  // disponible sin conexión gracias al service worker (ver vite.config.js),
+  // pero cobrar SÍ requiere red todavía — la cola de ventas offline es un
+  // checkpoint aparte. Este banner avisa cuándo los datos que se ven pueden
+  // no estar al día y cuándo cobrar no va a funcionar.
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true)
+    const goOffline = () => setIsOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => { window.removeEventListener('online', goOnline); window.removeEventListener('offline', goOffline) }
+  }, [])
 
   useEffect(() => {
     const handler = (e) => {
@@ -130,6 +144,11 @@ export default function App() {
   return (
     <ErrorBoundary>
     <HashRouter>
+      {!isOnline && (
+        <div className="offline-banner">
+          Sin conexión — mostrando el catálogo guardado, puede no estar al día. No se puede cobrar hasta recuperar la señal.
+        </div>
+      )}
       <Routes>
         <Route path="/login" element={user ? <Navigate to="/" /> : <Login onLogin={handleLogin} />} />
         <Route path="/" element={user ? <Navigate to={user.role === 'inventory' ? '/inventory' : '/pos'} /> : <Navigate to="/login" />} />

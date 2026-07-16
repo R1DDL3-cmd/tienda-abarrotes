@@ -240,6 +240,11 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 }
 .more-menu button:hover { background: var(--bg-hover); }
 
+.offline-banner {
+  position: sticky; top: 0; z-index: 2000; background: var(--warning-dark); color: #fff;
+  text-align: center; padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 600;
+}
+
 .network-bar {
   background: var(--bg-hover); padding: 0.25rem 1.2rem; font-size: 0.75rem; text-align: center;
   border-bottom: 1px solid var(--border); color: var(--text-muted);

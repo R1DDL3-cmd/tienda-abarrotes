@@ -68,6 +68,10 @@ export default function POS({ user, onLogout }) {
   useEffect(() => { if (success) { const t = setTimeout(() => setSuccess(''), 3000); return () => clearTimeout(t) } }, [success])
   useEffect(() => { network.info().then(setNetworkInfo).catch(() => {}) }, [])
   useEffect(() => { settingsApi.getStore().then(setStoreInfo).catch(() => {}) }, [])
+  // Precalienta el catálogo offline (ver api.js): el POS normalmente nunca
+  // pide el catálogo completo (solo busca/escanea puntualmente), así que sin
+  // esto no habría nada guardado para cuando falte la conexión.
+  useEffect(() => { products.all().catch(() => {}); customers.list().catch(() => {}) }, [])
   useEffect(() => { loadTodaySales() }, [])
 
   const loadRegister = useCallback(async () => {
@@ -317,6 +321,10 @@ export default function POS({ user, onLogout }) {
     const totalPaid = getPaymentTotal()
     if (totalPaid < total) {
       setError('El total de pagos debe cubrir el monto de la venta')
+      return
+    }
+    if (!navigator.onLine) {
+      setError('Sin conexión: no se puede cobrar en este momento. El carrito no se pierde — intenta de nuevo cuando vuelva la señal.')
       return
     }
 

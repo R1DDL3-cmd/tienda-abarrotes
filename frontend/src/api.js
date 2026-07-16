@@ -12,6 +12,29 @@ export function getToken() {
   return authToken;
 }
 
+// --- Checkpoint 1 de modo offline: catálogo de solo lectura ---
+// La tablet accede por IP de LAN sobre HTTP plano (no localhost, no HTTPS),
+// así que un Service Worker no es una opción — los navegadores solo permiten
+// Service Workers en "contextos seguros" (verificado en vivo: funciona en
+// localhost, se bloquea en http://192.168.x.x). Este es un caché manual en
+// localStorage: cada fetch exitoso del catálogo guarda una copia; si el
+// fetch falla (sin red), se cae a esa copia y se filtra en el cliente.
+// Cubre "se cae el WiFi a medio turno" — NO cubre abrir la app desde cero
+// sin conexión (eso sí requeriría Service Worker + HTTPS).
+const OFFLINE_PRODUCTS_KEY = 'offline_catalog_products';
+const OFFLINE_CUSTOMERS_KEY = 'offline_catalog_customers';
+
+function saveOfflineSnapshot(key, data) {
+  try { localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() })); } catch (e) {}
+}
+
+function loadOfflineSnapshot(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
 async function request(endpoint, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -48,9 +71,42 @@ export const auth = {
 
 export const products = {
   list: (params) => request(`/products?${new URLSearchParams(params)}`),
-  all: () => request('/products/all'),
-  search: (q) => request(`/products?search=${encodeURIComponent(q)}&limit=50`),
-  getByBarcode: (barcode) => request(`/products/barcode/${encodeURIComponent(barcode)}`),
+  all: async () => {
+    try {
+      const res = await request('/products/all');
+      saveOfflineSnapshot(OFFLINE_PRODUCTS_KEY, res.products);
+      return res;
+    } catch (e) {
+      const snap = loadOfflineSnapshot(OFFLINE_PRODUCTS_KEY);
+      if (snap) return { products: snap.data, _offline: true, _cachedAt: snap.ts };
+      throw e;
+    }
+  },
+  search: async (q) => {
+    try {
+      return await request(`/products?search=${encodeURIComponent(q)}&limit=50`);
+    } catch (e) {
+      const snap = loadOfflineSnapshot(OFFLINE_PRODUCTS_KEY);
+      if (snap) {
+        const term = q.toLowerCase();
+        const products = snap.data.filter(p =>
+          p.name.toLowerCase().includes(term) || (p.barcode && p.barcode.includes(q))
+        ).slice(0, 50);
+        return { products, total: products.length, _offline: true, _cachedAt: snap.ts };
+      }
+      throw e;
+    }
+  },
+  getByBarcode: async (barcode) => {
+    try {
+      return await request(`/products/barcode/${encodeURIComponent(barcode)}`);
+    } catch (e) {
+      const snap = loadOfflineSnapshot(OFFLINE_PRODUCTS_KEY);
+      const found = snap?.data.find(p => p.barcode === barcode);
+      if (found) return { ...found, _offline: true, _cachedAt: snap.ts };
+      throw e;
+    }
+  },
   lowStock: () => request('/products/low-stock'),
   expiring: () => request('/products/expiring'),
   create: (data) => request('/products', { method: 'POST', body: JSON.stringify(data) }),
@@ -83,7 +139,23 @@ export const sales = {
 };
 
 export const customers = {
-  list: (search) => request(`/customers?${search ? `search=${encodeURIComponent(search)}` : ''}`),
+  list: async (search) => {
+    try {
+      const res = await request(`/customers?${search ? `search=${encodeURIComponent(search)}` : ''}`);
+      if (!search) saveOfflineSnapshot(OFFLINE_CUSTOMERS_KEY, res.customers);
+      return res;
+    } catch (e) {
+      const snap = loadOfflineSnapshot(OFFLINE_CUSTOMERS_KEY);
+      if (snap) {
+        const term = (search || '').toLowerCase();
+        const customers = term
+          ? snap.data.filter(c => c.name.toLowerCase().includes(term) || (c.phone && c.phone.includes(search)))
+          : snap.data;
+        return { customers, _offline: true, _cachedAt: snap.ts };
+      }
+      throw e;
+    }
+  },
   get: (id) => request(`/customers/${id}`),
   history: (id) => request(`/customers/${id}/history`),
   create: (data) => request('/customers', { method: 'POST', body: JSON.stringify(data) }),
