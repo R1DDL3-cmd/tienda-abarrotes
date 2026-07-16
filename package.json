@@ -27,6 +27,10 @@
       {
         "from": "resources/productos.xlsx",
         "to": "productos.xlsx"
+      },
+      {
+        "from": "resources/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {
@@ -36,7 +40,7 @@
           "arch": ["x64", "ia32"]
         }
       ],
-      "icon": null
+      "icon": "resources/icon.ico"
     },
     "nsis": {
       "oneClick": false,

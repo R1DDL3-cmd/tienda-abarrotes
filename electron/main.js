@@ -8,6 +8,15 @@ let serverReady = false;
 const isDev = !app.isPackaged;
 const PORT = 3000;
 
+// En dev, resources/ es una carpeta real junto a electron/. En un build
+// empaquetado con asar, __dirname vive DENTRO del .asar, así que
+// '../resources/icon.ico' apuntaría a una ruta que no existe ahí — hay que
+// usar process.resourcesPath (fuera del asar) y que electron-builder copie
+// resources/icon.ico ahí vía "extraResources" (ver package.json).
+const ICON_PATH = isDev
+  ? path.join(__dirname, '..', 'resources', 'icon.ico')
+  : path.join(process.resourcesPath, 'icon.ico');
+
 function startServer() {
   return new Promise((resolve) => {
     process.env.PORT = PORT.toString();
@@ -43,7 +52,7 @@ function createWindow() {
     height: 768,
     minWidth: 800,
     minHeight: 600,
-    icon: path.join(__dirname, '..', 'resources', 'icon.ico'),
+    icon: ICON_PATH,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -86,12 +95,9 @@ function createWindow() {
 }
 
 function createTray() {
-  const iconSize = 16;
-  const icon = nativeImage.createEmpty();
-  const trayIcon = nativeImage.createFromBuffer(
-    Buffer.alloc(iconSize * iconSize * 4, 0),
-    { width: iconSize, height: iconSize }
-  );
+  // Antes se creaba un buffer RGBA vacío (todo en ceros) como ícono de la
+  // bandeja del sistema: técnicamente válido pero completamente invisible.
+  const trayIcon = nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 });
 
   tray = new Tray(trayIcon);
   tray.setToolTip('Sistema Tienda de Abarrotes');
