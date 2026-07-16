@@ -1,9 +1,11 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, Notification, ipcMain } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
 let mainWindow;
 let tray;
 let serverReady = false;
+let updateReadyToInstall = false;
 
 const isDev = !app.isPackaged;
 const PORT = 3000;
@@ -114,19 +116,11 @@ function createWindow() {
   });
 }
 
-function createTray() {
-  // Antes se creaba un buffer RGBA vacío (todo en ceros) como ícono de la
-  // bandeja del sistema: técnicamente válido pero completamente invisible.
-  const trayIcon = nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 });
-
-  tray = new Tray(trayIcon);
-  tray.setToolTip('Sistema Tienda de Abarrotes');
-
+function buildTrayMenu() {
   const localIP = getLocalIP();
-
   const trayPort = process.env.ACTUAL_PORT || PORT;
 
-  const contextMenu = Menu.buildFromTemplate([
+  return Menu.buildFromTemplate([
     {
       label: `Abierto en: http://${localIP}:${trayPort}`,
       enabled: false
@@ -139,6 +133,21 @@ function createTray() {
         else createWindow();
       }
     },
+    updateReadyToInstall
+      ? {
+          label: 'Reiniciar para actualizar',
+          click: () => {
+            app.isQuitting = true;
+            autoUpdater.quitAndInstall();
+          }
+        }
+      : {
+          label: 'Buscar actualizaciones',
+          click: () => {
+            autoUpdater.checkForUpdates().catch((e) => console.error('Error buscando actualizaciones:', e.message));
+          }
+        },
+    { type: 'separator' },
     {
       label: 'Cerrar servidor',
       click: () => {
@@ -147,11 +156,45 @@ function createTray() {
       }
     }
   ]);
+}
 
-  tray.setContextMenu(contextMenu);
+function createTray() {
+  // Antes se creaba un buffer RGBA vacío (todo en ceros) como ícono de la
+  // bandeja del sistema: técnicamente válido pero completamente invisible.
+  const trayIcon = nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 });
+
+  tray = new Tray(trayIcon);
+  tray.setToolTip('Sistema Tienda de Abarrotes');
+  tray.setContextMenu(buildTrayMenu());
   tray.on('double-click', () => {
     if (mainWindow) mainWindow.show();
   });
+}
+
+function setupAutoUpdater() {
+  if (isDev) return;
+
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-downloaded', () => {
+    updateReadyToInstall = true;
+    if (tray) tray.setContextMenu(buildTrayMenu());
+    new Notification({
+      title: 'Actualización descargada',
+      body: 'Hay una nueva versión lista. Se instalará al cerrar el programa, o puedes reiniciar ahora desde el ícono de la bandeja.'
+    }).show();
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('Error buscando actualizaciones:', err.message);
+  });
+
+  const checkForUpdates = () => {
+    autoUpdater.checkForUpdates().catch((e) => console.error('Error buscando actualizaciones:', e.message));
+  };
+
+  checkForUpdates();
+  setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
 }
 
 ipcMain.on('restart-app', () => {
@@ -169,6 +212,7 @@ app.whenReady().then(async () => {
 
   createWindow();
   createTray();
+  setupAutoUpdater();
 
   const localIP = getLocalIP();
   const outPort = process.env.ACTUAL_PORT || PORT;

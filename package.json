@@ -9,6 +9,7 @@
     "dev": "npm run dev:server & npm run dev:frontend",
     "build:frontend": "cd frontend && npx vite build",
     "build": "npm run build:frontend && npx electron-builder",
+    "release": "npm run build:frontend && npx electron-builder --publish always",
     "start": "electron .",
     "test": "node server/test-transaction-persist.js"
   },
@@ -49,11 +50,17 @@
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "R1DDL3-cmd",
+      "repo": "tienda-abarrotes"
     }
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "electron-updater": "^6.3.9",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
     "sql.js": "^1.9.0",
