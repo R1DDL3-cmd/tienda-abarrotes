@@ -1,8 +1,15 @@
 import React, { useState, useEffect } from 'react'
-import { suppliers as suppliersApi, purchases as purchasesApi, products as productsApi } from '../api'
-import { formatDate } from '../dateUtils'
+import { suppliers as suppliersApi, purchases as purchasesApi, products as productsApi, settings as settingsApi } from '../api'
+import { formatDate, formatDateTime } from '../dateUtils'
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
 
 export default function Purchases({ user }) {
+  const [storeInfo, setStoreInfo] = useState({ store_name: 'Tienda de Abarrotes', store_address: '', store_phone: '' })
+  useEffect(() => { settingsApi.getStore().then(setStoreInfo).catch(() => {}) }, [])
+
   const [suppliers, setSuppliers] = useState([])
   const [selectedSupplier, setSelectedSupplier] = useState(null)
   const [purchases, setPurchases] = useState([])
@@ -213,59 +220,71 @@ export default function Purchases({ user }) {
     } catch (e) { setError(e.message) }
   }
 
+  // Antes esto imprimía en formato carta/A4 (ventana ancha, tabla con
+  // encabezados grises) — se cambia a formato de ticket térmico 58mm, igual
+  // que los tickets de venta del POS, para que salga en la misma impresora
+  // de la caja sin tener que configurar una impresora de página completa aparte.
   const printPurchase = (purchase) => {
-    const win = window.open('', '_blank', 'width=700,height=900')
+    const win = window.open('', '_blank', 'width=380,height=600')
     if (!win) { setError('El navegador bloqueó la ventana de impresión'); return }
-    const fecha = formatDate(purchase.created_at, { dateStyle: 'long' })
-    const rows = purchase.items.map(item => `
+
+    const itemsHtml = (purchase.items || []).map(item => `
       <tr>
-        <td>${item.product_name}${item.barcode ? ` (${item.barcode})` : ''}</td>
-        <td style="text-align:right">${item.quantity}</td>
+        <td class="product-name">${escapeHtml(item.product_name)}</td>
+        <td style="text-align:center">${item.quantity}</td>
         <td style="text-align:right">$${(item.unit_price || 0).toFixed(2)}</td>
         <td style="text-align:right">$${(item.subtotal || 0).toFixed(2)}</td>
-      </tr>`).join('')
+      </tr>
+    `).join('')
+
+    const statusLabel = { pending: 'PEDIDO PENDIENTE', completed: 'COMPRA RECIBIDA', cancelled: 'CANCELADA' }[purchase.status] || purchase.status
+
+    const storeHeader = `
+      <h3>${escapeHtml(storeInfo.store_name)}</h3>
+      ${storeInfo.store_address ? `<p>${escapeHtml(storeInfo.store_address)}</p>` : ''}
+      ${storeInfo.store_phone ? `<p>Tel: ${escapeHtml(storeInfo.store_phone)}</p>` : ''}
+    `
+
     win.document.write(`
-      <html>
-        <head>
-          <title>Pedido #${purchase.id} - ${purchase.supplier_name}</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
-            h1 { font-size: 1.3rem; margin-bottom: 0; }
-            .meta { color: #555; margin-bottom: 1rem; }
-            table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-            th, td { border-bottom: 1px solid #ddd; padding: 6px 8px; font-size: 0.9rem; }
-            th { text-align: left; background: #f3f3f3; }
-            .totals { margin-top: 1rem; text-align: right; }
-            .totals div { margin: 2px 0; }
-            .total-final { font-weight: bold; font-size: 1.1rem; }
-            .notes { margin-top: 1.5rem; border-top: 1px dashed #999; padding-top: 0.5rem; }
-          </style>
-        </head>
-        <body>
-          <h1>Pedido a proveedor #${purchase.id}</h1>
-          <div class="meta">
-            <div><strong>Proveedor:</strong> ${purchase.supplier_name}</div>
-            ${purchase.supplier_contact ? `<div><strong>Contacto:</strong> ${purchase.supplier_contact}</div>` : ''}
-            ${purchase.supplier_phone ? `<div><strong>Teléfono:</strong> ${purchase.supplier_phone}</div>` : ''}
-            <div><strong>Fecha:</strong> ${fecha}</div>
-            ${purchase.invoice_number ? `<div><strong>Factura/Folio:</strong> ${purchase.invoice_number}</div>` : ''}
-          </div>
-          <table>
-            <thead><tr><th>Producto</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Precio</th><th style="text-align:right">Subtotal</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-          <div class="totals">
-            <div>Subtotal: $${(purchase.subtotal || 0).toFixed(2)}</div>
-            <div>IVA (16%): $${(purchase.tax || 0).toFixed(2)}</div>
-            <div class="total-final">Total: $${(purchase.total || 0).toFixed(2)}</div>
-          </div>
-          ${purchase.notes ? `<div class="notes"><strong>Notas:</strong> ${purchase.notes}</div>` : ''}
-        </body>
-      </html>
+      <html><head><title>Pedido #${purchase.id}</title>
+      <style>
+        body { font-family: 'Courier New', monospace; font-size: 12px; width: 58mm; margin: 0; padding: 5px; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        th, td { padding: 2px 0; overflow-wrap: break-word; word-break: break-word; }
+        .product-name { max-width: 0; }
+        .center { text-align: center; }
+        .right { text-align: right; }
+        .line { border-top: 1px dashed #000; margin: 5px 0; }
+        h3 { margin: 5px 0; overflow-wrap: break-word; }
+        p { margin: 2px 0; }
+        @media print { body { width: 58mm; } }
+      </style></head><body>
+      <div class="center">
+        ${storeHeader}
+        <p><strong>${statusLabel}</strong></p>
+        <p>Pedido #${purchase.id}${purchase.invoice_number ? ' — Factura: ' + escapeHtml(purchase.invoice_number) : ''}</p>
+        <p>${formatDateTime(purchase.created_at)}</p>
+        <p>Proveedor: ${escapeHtml(purchase.supplier_name)}</p>
+        ${purchase.supplier_contact ? `<p>Contacto: ${escapeHtml(purchase.supplier_contact)}</p>` : ''}
+        ${purchase.supplier_phone ? `<p>Tel: ${escapeHtml(purchase.supplier_phone)}</p>` : ''}
+      </div>
+      <div class="line"></div>
+      <table>
+        <colgroup><col style="width:46%"><col style="width:16%"><col style="width:19%"><col style="width:19%"></colgroup>
+        <tr><th style="text-align:left">Producto</th><th>Cant</th><th style="text-align:right">Precio</th><th style="text-align:right">Subtotal</th></tr>
+        ${itemsHtml}
+      </table>
+      <div class="line"></div>
+      <div class="right">
+        <p>Subtotal: $${(purchase.subtotal || 0).toFixed(2)}</p>
+        <p>IVA: $${(purchase.tax || 0).toFixed(2)}</p>
+        <p><strong>TOTAL: $${(purchase.total || 0).toFixed(2)}</strong></p>
+      </div>
+      ${purchase.notes ? `<div class="line"></div><p>Notas: ${escapeHtml(purchase.notes)}</p>` : ''}
+      <script>window.print()</script>
+      </body></html>
     `)
     win.document.close()
-    win.focus()
-    win.print()
   }
 
   const statusBadge = (status) => {
