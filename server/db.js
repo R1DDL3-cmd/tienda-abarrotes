@@ -577,6 +577,10 @@ const SCHEMA_MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_product_barcodes_product ON product_barcodes(product_id);
     `);
   },
+  // v6: configuración simple clave-valor (ej. periodo de inventario obsoleto)
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
+  },
 ];
 
 function getSchemaVersion(db) {

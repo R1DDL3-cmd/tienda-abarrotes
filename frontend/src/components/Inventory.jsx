@@ -34,6 +34,11 @@ export default function Inventory({ user, onLogout }) {
   const [showCategoriesModal, setShowCategoriesModal] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
   const [editingCategory, setEditingCategory] = useState(null)
+  const [showObsoleteModal, setShowObsoleteModal] = useState(false)
+  const [obsoleteDays, setObsoleteDays] = useState(90)
+  const [obsoleteProducts, setObsoleteProducts] = useState([])
+  const [obsoleteLoading, setObsoleteLoading] = useState(false)
+  const [selectedObsolete, setSelectedObsolete] = useState(new Set())
 
   const loadProducts = useCallback(async () => {
     try {
@@ -221,6 +226,57 @@ export default function Inventory({ user, onLogout }) {
     } catch (e) { setError(e.message) }
   }
 
+  const openObsoleteModal = async () => {
+    setShowObsoleteModal(true)
+    setSelectedObsolete(new Set())
+    try {
+      const settings = await products.getObsoleteSettings()
+      setObsoleteDays(settings.days)
+      await loadObsolete(settings.days)
+    } catch (e) { setError(e.message) }
+  }
+
+  const loadObsolete = async (days) => {
+    setObsoleteLoading(true)
+    try {
+      const res = await products.obsolete(days)
+      setObsoleteProducts(res.products)
+    } catch (e) { setError(e.message) }
+    setObsoleteLoading(false)
+  }
+
+  const handleSaveObsoleteDays = async () => {
+    try {
+      await products.setObsoleteSettings(obsoleteDays)
+      await loadObsolete(obsoleteDays)
+      setSuccess('Periodo actualizado')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
+  }
+
+  const toggleObsoleteSelected = (id) => {
+    setSelectedObsolete(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const handleDeactivateSelected = async () => {
+    if (selectedObsolete.size === 0) return
+    if (!confirm(`¿Desactivar ${selectedObsolete.size} producto(s)? Podrás reactivarlos manualmente después si hace falta.`)) return
+    try {
+      for (const id of selectedObsolete) {
+        await products.remove(id)
+      }
+      setSuccess(`${selectedObsolete.size} producto(s) desactivado(s)`)
+      setTimeout(() => setSuccess(''), 3000)
+      setSelectedObsolete(new Set())
+      await loadObsolete(obsoleteDays)
+      loadProducts()
+    } catch (e) { setError(e.message) }
+  }
+
   const openWasteModal = (product) => {
     setWasteForm({ product_id: product?.id?.toString() || '', product_name: product?.name || '', quantity: '', reason: '', waste_type: 'waste', notes: '' })
     if (!product) {
@@ -268,6 +324,11 @@ export default function Inventory({ user, onLogout }) {
                 Mermas
               </button>
             </>
+          )}
+          {(user?.role === 'admin' || user?.role === 'inventory') && (
+            <button className="btn btn-sm btn-outline" onClick={openObsoleteModal}>
+              Inventario Obsoleto
+            </button>
           )}
           <button className="btn btn-sm btn-outline" onClick={openCategoriesModal}>Categorías</button>
         </div>
@@ -496,6 +557,50 @@ export default function Inventory({ user, onLogout }) {
             {error && <div className="alert alert-error" style={{marginTop:'0.5rem'}}>{error}</div>}
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => { setBarcodeProduct(null); setError('') }}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showObsoleteModal && (
+        <div className="modal-overlay" onClick={() => setShowObsoleteModal(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Inventario Obsoleto</h3>
+              <button className="btn btn-sm btn-outline" onClick={() => setShowObsoleteModal(false)}>Cerrar</button>
+            </div>
+            <div className="modal-body">
+              <p className="text-muted">Productos activos que no se han vuelto a surtir (compra, lote o ajuste de entrada) en el periodo configurado. No significa que no se vendan — puede que el proveedor ya no los surta y convenga descontinuarlos.</p>
+              <div className="form-inline">
+                <label>Periodo (días):</label>
+                <input type="number" className="input" style={{width: '90px'}} min="1" value={obsoleteDays} onChange={e => setObsoleteDays(parseInt(e.target.value) || 1)} />
+                <button className="btn btn-sm btn-outline" onClick={handleSaveObsoleteDays}>Guardar periodo</button>
+                <button className="btn btn-sm btn-outline" onClick={() => loadObsolete(obsoleteDays)}>Actualizar lista</button>
+              </div>
+              {obsoleteLoading ? <div className="loading">Cargando...</div> : (
+                <div className="table-responsive" style={{marginTop: '0.5rem'}}>
+                  <table className="table">
+                    <thead>
+                      <tr><th></th><th>Producto</th><th>Stock</th><th>Último surtido</th></tr>
+                    </thead>
+                    <tbody>
+                      {obsoleteProducts.map(p => (
+                        <tr key={p.id}>
+                          <td><input type="checkbox" checked={selectedObsolete.has(p.id)} onChange={() => toggleObsoleteSelected(p.id)} /></td>
+                          <td>{p.name} {p.barcode ? `(${p.barcode})` : ''}</td>
+                          <td>{p.stock} {p.unit_type === 'kg' ? 'kg' : p.unit_type === 'l' ? 'L' : ''}</td>
+                          <td style={{fontSize: '0.85rem'}}>{p.last_restocked_at ? new Date(p.last_restocked_at + 'Z').toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' }) : 'Nunca'}</td>
+                        </tr>
+                      ))}
+                      {obsoleteProducts.length === 0 && <tr><td colSpan="4" className="text-center">No hay productos obsoletos con este criterio</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowObsoleteModal(false)}>Cerrar</button>
+              <button className="btn btn-danger" disabled={selectedObsolete.size === 0} onClick={handleDeactivateSelected}>Desactivar seleccionados ({selectedObsolete.size})</button>
             </div>
           </div>
         </div>

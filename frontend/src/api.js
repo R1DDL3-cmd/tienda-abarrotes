@@ -67,6 +67,9 @@ export const products = {
   barcodes: (productId) => request(`/products/${productId}/barcodes`),
   addBarcode: (productId, barcode) => request(`/products/${productId}/barcodes`, { method: 'POST', body: JSON.stringify({ barcode }) }),
   deleteBarcode: (barcodeId) => request(`/products/barcodes/${barcodeId}`, { method: 'DELETE' }),
+  obsolete: (days) => request(`/products/obsolete${days ? `?days=${days}` : ''}`),
+  getObsoleteSettings: () => request('/products/obsolete/settings'),
+  setObsoleteSettings: (days) => request('/products/obsolete/settings', { method: 'PUT', body: JSON.stringify({ days }) }),
 };
 
 export const sales = {

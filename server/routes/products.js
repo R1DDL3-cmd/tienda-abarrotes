@@ -365,6 +365,60 @@ router.delete('/categories/:id', authMiddleware, inventoryAdminMiddleware, (req,
   res.json({ success: true });
 });
 
+const DEFAULT_OBSOLETE_DAYS = 90;
+
+router.get('/obsolete/settings', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'obsolete_inventory_days'").get();
+  res.json({ days: row ? parseInt(row.value) : DEFAULT_OBSOLETE_DAYS });
+});
+
+router.put('/obsolete/settings', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  const days = parseInt(req.body.days);
+  if (!days || days < 1) return res.status(400).json({ error: 'Periodo inválido' });
+  db.prepare("INSERT INTO settings (key, value) VALUES ('obsolete_inventory_days', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(String(days));
+  res.json({ days });
+});
+
+// "No surtido" = sin movimiento de entrada (compra, lote, ajuste positivo,
+// inventario inicial) en el periodo configurado. No mide ventas — un producto
+// puede venderse bien y de todos modos llevar meses sin reabastecerse porque
+// el proveedor lo descontinuó, que es justo el caso que esta pantalla ayuda
+// a detectar antes de que el stock se agote silenciosamente o se acumule
+// polvo en mercancía que ya nadie repone.
+router.get('/obsolete', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  let days = parseInt(req.query.days);
+  if (!days || days < 1) {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'obsolete_inventory_days'").get();
+    days = row ? parseInt(row.value) : DEFAULT_OBSOLETE_DAYS;
+  }
+
+  const products = db.prepare(
+    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name,
+       (SELECT MAX(created_at) FROM inventory_movements im WHERE im.product_id = p.id AND im.type = 'in') as last_restocked_at
+     FROM products p
+     LEFT JOIN categories c ON p.category_id = c.id
+     WHERE p.active = 1
+     ORDER BY p.name ASC`
+  ).all();
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+
+  const obsolete = products.filter(p => {
+    const createdAt = new Date(p.created_at.replace(' ', 'T') + 'Z');
+    if (createdAt > cutoff) return false; // producto nuevo, aún no le toca reabastecerse
+    if (!p.last_restocked_at) return true; // nunca se ha reabastecido desde que se creó
+    const lastRestock = new Date(p.last_restocked_at.replace(' ', 'T') + 'Z');
+    return lastRestock <= cutoff;
+  });
+
+  res.json({ days, products: obsolete });
+});
+
 router.get('/kardex/:productId', authMiddleware, (req, res) => {
   const db = getDB();
   const page = parseInt(req.query.page) || 1;
