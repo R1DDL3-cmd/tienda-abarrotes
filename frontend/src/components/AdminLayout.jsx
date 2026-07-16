@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { getTheme, toggleTheme } from '../theme'
 
 export default function AdminLayout({ user, onLogout, children }) {
   const navigate = useNavigate()
   const location = useLocation()
   const [clock, setClock] = useState(new Date())
+  const [theme, setThemeState] = useState(getTheme())
 
   useEffect(() => {
     const id = setInterval(() => setClock(new Date()), 1000)
@@ -41,6 +43,9 @@ export default function AdminLayout({ user, onLogout, children }) {
         </nav>
         <div className="header-right">
           <span className="header-date">{clock.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'America/Mexico_City' })} {clock.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'America/Mexico_City' })}</span>
+          <button className="btn btn-sm btn-outline" onClick={() => setThemeState(toggleTheme())} title={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
           {user?.role === 'admin' && (
           <button className="btn btn-sm btn-outline" onClick={() => navigate('/settings')} title="Configuracion">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

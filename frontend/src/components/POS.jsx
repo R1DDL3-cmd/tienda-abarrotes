@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { sales, products, customers, network, accounting, withdrawals, hardware, settings as settingsApi } from '../api'
+import { getTheme, toggleTheme } from '../theme'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -24,6 +25,7 @@ export default function POS({ user, onLogout }) {
   const [todaySales, setTodaySales] = useState({ count: 0, total_sales: 0 })
   const [networkInfo, setNetworkInfo] = useState(null)
   const [storeInfo, setStoreInfo] = useState({ store_name: 'Tienda de Abarrotes', store_address: '', store_phone: '', ticket_footer: '¡Gracias por su compra!' })
+  const [theme, setThemeState] = useState(getTheme())
   const [historyModal, setHistoryModal] = useState(false)
   const [salesHistory, setSalesHistory] = useState([])
   const [cancelModal, setCancelModal] = useState(null)
@@ -625,6 +627,9 @@ export default function POS({ user, onLogout }) {
             )}
           </div>
           <div className="btn-group">
+            <button className="btn btn-sm btn-outline" onClick={() => setThemeState(toggleTheme())} title={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}>
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
             <button className="btn btn-sm btn-outline" onClick={() => setHistoryModal(true)}>Historial</button>
             <button className="btn btn-sm btn-outline" onClick={handleLogout}>Salir</button>
             {user?.role === 'admin' && (

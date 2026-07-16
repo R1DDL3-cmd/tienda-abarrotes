@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { auth, backup, settings as settingsApi } from '../api'
+import { getTheme, setTheme } from '../theme'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -22,6 +23,12 @@ export default function Settings({ user }) {
   const [backupPath, setBackupPath] = useState('')
   const importFileRef = useRef(null)
   const [storeForm, setStoreForm] = useState({ store_name: '', store_address: '', store_phone: '', ticket_footer: '' })
+  const [theme, setThemeState] = useState(getTheme())
+
+  const handleThemeChange = (value) => {
+    setTheme(value)
+    setThemeState(value)
+  }
 
   const loadUsers = async () => {
     try { const res = await auth.listUsers(); setUserList(res.users) }
@@ -167,6 +174,7 @@ export default function Settings({ user }) {
 
   const tabs = [
     { id: 'store', label: 'Tienda' },
+    { id: 'appearance', label: 'Apariencia' },
     { id: 'users', label: 'Usuarios' },
     { id: 'password', label: 'Contraseña' },
     { id: 'security', label: 'Seguridad' },
@@ -214,6 +222,31 @@ export default function Settings({ user }) {
           </div>
           <div className="modal-actions" style={{padding:0, marginTop:'1rem'}}>
             <button className="btn btn-primary" onClick={handleSaveStore}>Guardar</button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'appearance' && (
+        <div className="card" style={{maxWidth:'450px', padding:'1.5rem'}}>
+          <h3 style={{marginTop:0}}>Apariencia</h3>
+          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
+            Elige cómo se ve la aplicación. Se guarda en este dispositivo.
+          </p>
+          <div style={{display:'flex', gap:'0.75rem'}}>
+            <button
+              className={`btn ${theme === 'light' ? 'btn-primary' : 'btn-outline'}`}
+              style={{flex:1}}
+              onClick={() => handleThemeChange('light')}
+            >
+              ☀️ Claro
+            </button>
+            <button
+              className={`btn ${theme === 'dark' ? 'btn-primary' : 'btn-outline'}`}
+              style={{flex:1}}
+              onClick={() => handleThemeChange('dark')}
+            >
+              🌙 Oscuro
+            </button>
           </div>
         </div>
       )}
