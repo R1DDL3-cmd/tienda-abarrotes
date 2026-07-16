@@ -13,6 +13,7 @@ const { router: backupRoutes, getBackupDir } = require('./routes/backup');
 const hardwareRoutes = require('./routes/hardware');
 const eventsRoutes = require('./routes/events');
 const suppliersRoutes = require('./routes/suppliers');
+const settingsRoutes = require('./routes/settings');
 
 const app = express();
 const PORT = parseInt(process.env.PORT) || 3000;
@@ -65,6 +66,7 @@ async function start() {
   app.use('/api/backup', backupRoutes);
   app.use('/api/hardware', hardwareRoutes);
   app.use('/api/events', eventsRoutes);
+  app.use('/api/settings', settingsRoutes);
 
   // Debe registrarse ANTES de montar suppliersRoutes en '/api': ese router
   // aplica router.use(authMiddleware) sin filtro de ruta, así que intercepta

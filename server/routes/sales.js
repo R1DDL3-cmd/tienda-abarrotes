@@ -4,6 +4,17 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
+// El ticket impreso necesita mostrar el saldo pendiente del cliente cuando la
+// venta fue a crédito/fiado, no solo el total de esta venta — de lo contrario
+// el cliente no tiene forma de saber cuánto debe en total.
+function attachCustomerBalance(db, sale) {
+  if (sale && sale.customer_id) {
+    const customer = db.prepare('SELECT balance FROM customers WHERE id = ?').get(sale.customer_id);
+    sale.customer_balance = customer ? customer.balance : null;
+  }
+  return sale;
+}
+
 router.post('/', authMiddleware, (req, res) => {
   const db = getDB();
   const { items, payments, discount = 0, customer_id, customer_name } = req.body;
@@ -140,7 +151,7 @@ router.post('/', authMiddleware, (req, res) => {
 
   try {
     const saleId = transaction();
-    const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
+    const sale = attachCustomerBalance(db, db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId));
     const saleItems = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(saleId);
     res.status(201).json({ sale, items: saleItems || [] });
   } catch (e) {
@@ -245,7 +256,7 @@ router.get('/:id', authMiddleware, (req, res) => {
   if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
 
   sale.items = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(sale.id);
-  res.json(sale);
+  res.json(attachCustomerBalance(db, sale));
 });
 
 router.post('/:id/cancel', authMiddleware, (req, res) => {
@@ -307,7 +318,7 @@ router.get('/ticket/:id', authMiddleware, (req, res) => {
   const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(req.params.id);
   if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
   sale.items = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(sale.id);
-  res.json(sale);
+  res.json(attachCustomerBalance(db, sale));
 });
 
 module.exports = router;

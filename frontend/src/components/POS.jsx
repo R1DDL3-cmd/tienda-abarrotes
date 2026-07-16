@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { sales, products, customers, network, accounting, withdrawals, hardware } from '../api'
+import { sales, products, customers, network, accounting, withdrawals, hardware, settings as settingsApi } from '../api'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -23,6 +23,7 @@ export default function POS({ user, onLogout }) {
   const [success, setSuccess] = useState('')
   const [todaySales, setTodaySales] = useState({ count: 0, total_sales: 0 })
   const [networkInfo, setNetworkInfo] = useState(null)
+  const [storeInfo, setStoreInfo] = useState({ store_name: 'Tienda de Abarrotes', store_address: '', store_phone: '', ticket_footer: '¡Gracias por su compra!' })
   const [historyModal, setHistoryModal] = useState(false)
   const [salesHistory, setSalesHistory] = useState([])
   const [cancelModal, setCancelModal] = useState(null)
@@ -63,6 +64,7 @@ export default function POS({ user, onLogout }) {
   useEffect(() => { if (error) { const t = setTimeout(() => setError(''), 7000); return () => clearTimeout(t) } }, [error])
   useEffect(() => { if (success) { const t = setTimeout(() => setSuccess(''), 3000); return () => clearTimeout(t) } }, [success])
   useEffect(() => { network.info().then(setNetworkInfo).catch(() => {}) }, [])
+  useEffect(() => { settingsApi.getStore().then(setStoreInfo).catch(() => {}) }, [])
   useEffect(() => { loadTodaySales() }, [])
 
   const loadRegister = useCallback(async () => {
@@ -345,6 +347,10 @@ export default function POS({ user, onLogout }) {
     }
   }
 
+  const PAYMENT_METHOD_LABELS = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', credit: 'Fiado', fiado: 'Fiado' }
+
+  const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
   const printTicket = (saleData, items) => {
     if (!saleData) return
     const w = window.open('', '_blank', 'width=380,height=600')
@@ -354,45 +360,76 @@ export default function POS({ user, onLogout }) {
       const unitLabel = isWeight ? (i.unit_type === 'kg' ? ' kg' : ' L') : ''
       return `
       <tr>
-        <td>${i.product_name}</td>
+        <td class="product-name">${escapeHtml(i.product_name)}</td>
         <td style="text-align:center">${i.quantity}${unitLabel}</td>
         <td style="text-align:right">${formatMoney(i.unit_price)}</td>
         <td style="text-align:right">${formatMoney(i.subtotal)}</td>
       </tr>
     `}).join('')
 
+    // sale.payment_method ya viene como texto combinado ("cash: $50.00, credit: $20.00")
+    // desde el backend; se traduce cada método a español conservando el monto.
+    const paymentLine = (saleData.payment_method || '')
+      .split(',')
+      .map(part => {
+        const [method, amount] = part.split(':').map(s => s.trim())
+        const label = PAYMENT_METHOD_LABELS[method] || method
+        return amount ? `${label}: ${amount}` : label
+      })
+      .join(' + ')
+
+    const isCredit = saleData.customer_id && /credit|fiado/.test(saleData.payment_method || '')
+    const balanceHtml = isCredit && saleData.customer_balance != null ? `
+      <div class="line"></div>
+      <div class="center" style="font-weight:bold">
+        <p>SALDO PENDIENTE DE ${escapeHtml(saleData.customer_name || 'CLIENTE')}:</p>
+        <p style="font-size:14px">${formatMoney(saleData.customer_balance)}</p>
+      </div>
+    ` : ''
+
+    const storeHeader = `
+      <h3>${escapeHtml(storeInfo.store_name)}</h3>
+      ${storeInfo.store_address ? `<p>${escapeHtml(storeInfo.store_address)}</p>` : ''}
+      ${storeInfo.store_phone ? `<p>Tel: ${escapeHtml(storeInfo.store_phone)}</p>` : ''}
+    `
+
     w.document.write(`
       <html><head><title>Ticket - Venta #${saleData.id}</title>
       <style>
         body { font-family: 'Courier New', monospace; font-size: 12px; width: 58mm; margin: 0; padding: 5px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 2px 0; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        th, td { padding: 2px 0; overflow-wrap: break-word; word-break: break-word; }
+        .product-name { max-width: 0; }
         .center { text-align: center; }
         .right { text-align: right; }
         .line { border-top: 1px dashed #000; margin: 5px 0; }
-        h3 { margin: 5px 0; }
+        h3 { margin: 5px 0; overflow-wrap: break-word; }
+        p { margin: 2px 0; }
         @media print { body { width: 58mm; } }
       </style></head><body>
       <div class="center">
-        <h3>TIENDA DE ABARROTES</h3>
+        ${storeHeader}
         <p>Ticket de Venta #${saleData.id}</p>
-        <p>${new Date(saleData.created_at).toLocaleString('es-MX')}</p>
-        <p>Atendió: ${saleData.created_by_name || user?.name}</p>
+        <p>${new Date(saleData.created_at.replace(' ', 'T') + 'Z').toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}</p>
+        <p>Atendió: ${escapeHtml(saleData.created_by_name || user?.name)}</p>
+        ${saleData.customer_name ? `<p>Cliente: ${escapeHtml(saleData.customer_name)}</p>` : ''}
       </div>
       <div class="line"></div>
       <table>
-        <tr><th>Producto</th><th>Cant</th><th>Precio</th><th>Subtotal</th></tr>
+        <colgroup><col style="width:46%"><col style="width:16%"><col style="width:19%"><col style="width:19%"></colgroup>
+        <tr><th style="text-align:left">Producto</th><th>Cant</th><th style="text-align:right">Precio</th><th style="text-align:right">Subtotal</th></tr>
         ${itemsHtml}
       </table>
       <div class="line"></div>
       <div class="right">
         ${saleData.discount > 0 ? `<p>Descuento: -${formatMoney(saleData.discount)}</p>` : ''}
         <p><strong>TOTAL: ${formatMoney(saleData.total)}</strong></p>
-        <p>Método: ${saleData.payment_method}</p>
+        <p>Pago: ${escapeHtml(paymentLine)}</p>
       </div>
+      ${balanceHtml}
       <div class="line"></div>
       <div class="center">
-        <p>¡Gracias por su compra!</p>
+        <p>${escapeHtml(storeInfo.ticket_footer)}</p>
       </div>
       <script>window.print()</script>
       </body></html>

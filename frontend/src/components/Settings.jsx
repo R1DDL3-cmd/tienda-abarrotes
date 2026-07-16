@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { auth, backup } from '../api'
+import { auth, backup, settings as settingsApi } from '../api'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -21,6 +21,7 @@ export default function Settings({ user }) {
   const [securityPinForm, setSecurityPinForm] = useState('')
   const [backupPath, setBackupPath] = useState('')
   const importFileRef = useRef(null)
+  const [storeForm, setStoreForm] = useState({ store_name: '', store_address: '', store_phone: '', ticket_footer: '' })
 
   const loadUsers = async () => {
     try { const res = await auth.listUsers(); setUserList(res.users) }
@@ -92,6 +93,20 @@ export default function Settings({ user }) {
     }
   }, [tab])
 
+  useEffect(() => {
+    if (tab === 'store') {
+      settingsApi.getStore().then(setStoreForm).catch(e => setError(e.message))
+    }
+  }, [tab])
+
+  const handleSaveStore = async () => {
+    try {
+      await settingsApi.updateStore(storeForm)
+      setSuccess('Datos de la tienda actualizados')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
+  }
+
   const handleSaveSecurityPin = () => {
     if (!securityPinForm || securityPinForm.length < 4) { setError('El codigo debe tener al menos 4 caracteres'); return }
     localStorage.setItem('securityPin', securityPinForm)
@@ -151,6 +166,7 @@ export default function Settings({ user }) {
   }
 
   const tabs = [
+    { id: 'store', label: 'Tienda' },
     { id: 'users', label: 'Usuarios' },
     { id: 'password', label: 'Contraseña' },
     { id: 'security', label: 'Seguridad' },
@@ -173,6 +189,34 @@ export default function Settings({ user }) {
           <button key={t.id} className={`tab-btn ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
       </div>
+
+      {tab === 'store' && (
+        <div className="card" style={{maxWidth:'450px', padding:'1.5rem'}}>
+          <h3 style={{marginTop:0}}>Datos de la Tienda</h3>
+          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
+            Esta información aparece en los tickets impresos.
+          </p>
+          <div className="form-group">
+            <label>Nombre de la tienda</label>
+            <input type="text" value={storeForm.store_name} onChange={e => setStoreForm({...storeForm, store_name: e.target.value})} autoFocus />
+          </div>
+          <div className="form-group">
+            <label>Dirección</label>
+            <input type="text" value={storeForm.store_address} onChange={e => setStoreForm({...storeForm, store_address: e.target.value})} placeholder="Opcional" />
+          </div>
+          <div className="form-group">
+            <label>Teléfono</label>
+            <input type="text" value={storeForm.store_phone} onChange={e => setStoreForm({...storeForm, store_phone: e.target.value})} placeholder="Opcional" />
+          </div>
+          <div className="form-group">
+            <label>Mensaje al pie del ticket</label>
+            <input type="text" value={storeForm.ticket_footer} onChange={e => setStoreForm({...storeForm, ticket_footer: e.target.value})} />
+          </div>
+          <div className="modal-actions" style={{padding:0, marginTop:'1rem'}}>
+            <button className="btn btn-primary" onClick={handleSaveStore}>Guardar</button>
+          </div>
+        </div>
+      )}
 
       {tab === 'users' && (
         <div>

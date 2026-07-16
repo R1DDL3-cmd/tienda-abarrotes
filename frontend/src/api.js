@@ -201,3 +201,8 @@ export const purchases = {
   receive: (id, items) => request(`/purchases/${id}/receive`, { method: 'PUT', body: JSON.stringify({ items }) }),
   cancel: (id) => request(`/purchases/${id}`, { method: 'DELETE' }),
 };
+
+export const settings = {
+  getStore: () => request('/settings/store'),
+  updateStore: (data) => request('/settings/store', { method: 'PUT', body: JSON.stringify(data) }),
+};
