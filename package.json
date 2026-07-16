@@ -9,7 +9,8 @@
     "dev": "npm run dev:server & npm run dev:frontend",
     "build:frontend": "cd frontend && npx vite build",
     "build": "npm run build:frontend && npx electron-builder",
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node server/test-transaction-persist.js"
   },
   "build": {
     "appId": "com.tienda.abarrotes",

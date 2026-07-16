@@ -168,6 +168,7 @@ class DatabaseWrapper {
         const result = fn(...args);
         self.sqlDb.run('COMMIT');
         self._inTransaction = false;
+        _savePending = true;
         flushSave();
         return result;
       } catch (e) {
