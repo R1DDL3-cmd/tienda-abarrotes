@@ -62,10 +62,20 @@ router.post('/:id/payment', authMiddleware, (req, res) => {
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Monto inválido' });
   const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
   if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' });
-  db.prepare('UPDATE customers SET balance = balance - ? WHERE id = ?').run(amount, req.params.id);
-  db.prepare(
-    'INSERT INTO customer_payments (customer_id, amount, payment_method, notes, created_by) VALUES (?, ?, ?, ?, ?)'
-  ).run(req.params.id, amount, payment_method || 'cash', notes || null, req.user.id);
+
+  const transaction = db.transaction(() => {
+    db.prepare('UPDATE customers SET balance = balance - ? WHERE id = ?').run(amount, req.params.id);
+    db.prepare(
+      'INSERT INTO customer_payments (customer_id, amount, payment_method, notes, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(req.params.id, amount, payment_method || 'cash', notes || null, req.user.id);
+  });
+
+  try {
+    transaction();
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al registrar el pago: ' + e.message });
+  }
+
   const updated = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
   res.json({ customer: updated, success: true });
 });

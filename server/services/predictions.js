@@ -269,7 +269,24 @@ function predictProduct(productId, db) {
 // ============================================================
 // 4. PREDICCION COMPLETA (todos los productos activos)
 // ============================================================
-function predictAll(db) {
+// predictProduct() recalcula el modelo ~30 veces por producto (backtesting de
+// error), de forma sincrona sobre el mismo hilo que atiende el POS. Con un
+// catalogo de varios cientos de SKUs, correr esto en cada llamada a
+// /accounting/predictions, /risk y /predictions/health (que antes lo hacian
+// cada uno por separado) podia congelar las cajas/tablets varios segundos.
+// Se cachea el resultado por catalogo completo: es un tablero de compras, no
+// un dato que necesite ser exacto al segundo.
+const PREDICTIONS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
+let _predictionsCache = { data: null, ts: 0 };
+
+function invalidatePredictionsCache() {
+  _predictionsCache = { data: null, ts: 0 };
+}
+
+function predictAll(db, { forceRefresh = false } = {}) {
+  if (!forceRefresh && _predictionsCache.data && (Date.now() - _predictionsCache.ts) < PREDICTIONS_CACHE_TTL_MS) {
+    return _predictionsCache.data;
+  }
   const products = db.prepare("SELECT id FROM products WHERE active = 1").all();
   const results = [];
   for (const p of products) {
@@ -280,6 +297,7 @@ function predictAll(db) {
       console.error(`Error predicting product ${p.id}: ${e.message}`);
     }
   }
+  _predictionsCache = { data: results, ts: Date.now() };
   return results;
 }
 
@@ -287,20 +305,20 @@ function predictAll(db) {
 // 5. PREDICCION POR CATEGORIA (agregada)
 // ============================================================
 function predictByCategory(db) {
-  const products = db.prepare("SELECT id, category_id, category_name FROM products WHERE active = 1").all();
+  const predictions = predictAll(db);
+  const productsMeta = db.prepare("SELECT id, category_name FROM products WHERE active = 1").all();
+  const categoryById = {};
+  for (const p of productsMeta) categoryById[p.id] = p.category_name || 'General';
+
   const catMap = {};
-  for (const p of products) {
-    try {
-      const pred = predictProduct(p.id, db);
-      if (!pred) continue;
-      const cat = p.category_name || 'General';
-      if (!catMap[cat]) catMap[cat] = { category: cat, product_count: 0, daily_forecast: 0, monthly_forecast: 0, current_stock: 0, suggested_order: 0 };
-      catMap[cat].product_count++;
-      catMap[cat].daily_forecast += pred.daily_forecast;
-      catMap[cat].monthly_forecast += pred.monthly_forecast;
-      catMap[cat].current_stock += pred.current_stock;
-      catMap[cat].suggested_order += pred.suggested_order;
-    } catch (e) {}
+  for (const pred of predictions) {
+    const cat = categoryById[pred.product_id] || 'General';
+    if (!catMap[cat]) catMap[cat] = { category: cat, product_count: 0, daily_forecast: 0, monthly_forecast: 0, current_stock: 0, suggested_order: 0 };
+    catMap[cat].product_count++;
+    catMap[cat].daily_forecast += pred.daily_forecast;
+    catMap[cat].monthly_forecast += pred.monthly_forecast;
+    catMap[cat].current_stock += pred.current_stock;
+    catMap[cat].suggested_order += pred.suggested_order;
   }
   return Object.values(catMap).sort((a, b) => b.monthly_forecast - a.monthly_forecast);
 }
@@ -347,4 +365,4 @@ function getExecutiveSummary(db) {
   };
 }
 
-module.exports = { predictProduct, predictAll, predictByCategory, getExecutiveSummary };
+module.exports = { predictProduct, predictAll, predictByCategory, getExecutiveSummary, invalidatePredictionsCache };

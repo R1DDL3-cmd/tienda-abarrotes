@@ -55,6 +55,21 @@ router.post('/', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Método de pago inválido' });
   }
 
+  if (payments.some(p => p.method === 'credit' || p.method === 'fiado')) {
+    if (!customer_id) {
+      return res.status(400).json({ error: 'Debe seleccionar un cliente para vender a crédito/fiado' });
+    }
+    const customer = db.prepare('SELECT * FROM customers WHERE id = ? AND active = 1').get(customer_id);
+    if (!customer) {
+      return res.status(404).json({ error: 'Cliente no encontrado' });
+    }
+    const creditAmount = payments.filter(p => p.method === 'credit' || p.method === 'fiado').reduce((sum, p) => sum + (p.amount || 0), 0);
+    if (customer.credit_limit > 0 && customer.balance + creditAmount > customer.credit_limit) {
+      const available = Math.max(0, customer.credit_limit - customer.balance);
+      return res.status(400).json({ error: `Límite de crédito excedido para ${customer.name}. Disponible: $${available.toFixed(2)}` });
+    }
+  }
+
   const total = subtotal - discount;
   let totalPayments = 0;
   for (const p of payments) {
@@ -254,6 +269,28 @@ router.post('/:id/cancel', authMiddleware, (req, res) => {
         `INSERT INTO inventory_movements (product_id, type, quantity, stock_before, stock_after, reference_type, reference_id, notes, created_by)
          VALUES (?, 'in', ?, ?, ?, 'cancellation', ?, ?, ?)`
       ).run(item.product_id, item.quantity, stockBefore, stockBefore + item.quantity, req.params.id, 'Cancelación de venta', req.user.id);
+    }
+
+    // Si la venta canceló crédito/fiado, revertir el saldo del cliente
+    if (sale.customer_id) {
+      const salePayments = sale.payment_details ? JSON.parse(sale.payment_details) : [];
+      const creditAmount = salePayments.filter(p => p.method === 'credit' || p.method === 'fiado').reduce((sum, p) => sum + p.amount, 0);
+      if (creditAmount > 0) {
+        db.prepare('UPDATE customers SET balance = balance - ? WHERE id = ?').run(creditAmount, sale.customer_id);
+        db.prepare(
+          'INSERT INTO customer_payments (customer_id, sale_id, amount, payment_method, notes, created_by) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(sale.customer_id, sale.id, creditAmount, 'credit', `Cancelación de venta a crédito #${sale.id}`, req.user.id);
+      }
+    }
+
+    // Reflejar la cancelación en el corte de caja del día en que se hizo la venta original
+    const saleDate = sale.created_at.split(' ')[0].split('T')[0];
+    const register = db.prepare("SELECT * FROM cash_register WHERE date = ?").get(saleDate);
+    if (register) {
+      db.prepare(
+        `INSERT INTO cash_movements (cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at)
+         VALUES (?, 'return', ?, ?, ?, 'sale_cancel', ?, ?, datetime("now"))`
+      ).run(register.id, `Cancelación de venta #${sale.id} — ${reason}`, -sale.total, sale.id, req.user.id, req.user.name || '');
     }
   });
 

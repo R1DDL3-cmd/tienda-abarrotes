@@ -482,42 +482,101 @@ async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id);
   `);
 
-  try { db.exec('ALTER TABLE products ADD COLUMN unit_type TEXT DEFAULT \'unit\' CHECK(unit_type IN (\'unit\', \'kg\', \'l\'))'); } catch (e) {}
-  try { db.exec('ALTER TABLE products DROP COLUMN expiry_date'); } catch (e) {}
-  try { db.exec('ALTER TABLE cash_movements ADD COLUMN session_id INTEGER'); } catch (e) {}
-  // Add 'withdrawal' and 'cancel_withdrawal' to cash_movements CHECK by recreating table
-  try {
-    db.exec('ALTER TABLE cash_movements RENAME TO cm_old');
-    db.exec(`CREATE TABLE cash_movements (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      cash_register_id INTEGER NOT NULL,
-      session_id INTEGER,
-      type TEXT NOT NULL CHECK(type IN ('opening', 'closing', 'sale', 'expense', 'waste', 'return', 'payment', 'withdrawal', 'cancel_withdrawal')),
-      description TEXT NOT NULL,
-      amount REAL NOT NULL,
-      reference_id INTEGER,
-      reference_type TEXT,
-      created_by INTEGER,
-      created_by_name TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-    try {
-      db.exec('INSERT INTO cash_movements SELECT * FROM cm_old');
-    } catch (_) {
-      db.exec('INSERT INTO cash_movements (id, cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at) SELECT id, cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at FROM cm_old');
-    }
-    db.exec('DROP TABLE cm_old');
-  } catch (e) {}
-  // Remove CHECK constraint from users table to allow 'inventory' role
-  try {
-    db.exec('ALTER TABLE users RENAME TO users_old');
-    db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT \'cashier\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
-    db.exec('INSERT INTO users SELECT * FROM users_old');
-    db.exec('DROP TABLE users_old');
-  } catch (e) {}
+  runMigrations(db);
 
   flushSave();
   return db;
+}
+
+// Migraciones versionadas con PRAGMA user_version: cada bloque corre UNA sola
+// vez por base de datos. Antes, las secuencias RENAME -> CREATE -> INSERT ->
+// DROP se re-ejecutaban en CADA arranque dentro de un try/catch silencioso;
+// si la app se cerraba a la mitad (corte de luz, crash) la tabla podía quedar
+// renombrada a "_old" de forma permanente, dejando el login o la caja rotos
+// sin ningún mensaje de error visible.
+//
+// runRenameSequence() envuelve esas secuencias en una transacción explícita
+// para que sean atómicas. Los ALTER TABLE ADD/DROP COLUMN sueltos NO se
+// envuelven en transacción: son atómicos de por sí a nivel de SQLite, y aquí
+// se usan a propósito como "si ya existe/no existe, ignora el error" — meterlos
+// dentro de un BEGIN/COMMIT es lo que rompía todo, porque un ALTER fallido
+// puede hacer que SQLite aborte la transacción completa por su cuenta, y el
+// ROLLBACK posterior explota con "no transaction is active".
+function runRenameSequence(db, fn) {
+  db.sqlDb.run('BEGIN');
+  try {
+    fn();
+    db.sqlDb.run('COMMIT');
+  } catch (e) {
+    db.sqlDb.run('ROLLBACK');
+    throw e;
+  }
+}
+
+const SCHEMA_MIGRATIONS = [
+  // v1: unit_type en products, elimina expiry_date obsoleto (no-op si el
+  // esquema base ya los incluye/excluye, como en una instalación nueva)
+  (db) => {
+    try { db.exec('ALTER TABLE products ADD COLUMN unit_type TEXT DEFAULT \'unit\' CHECK(unit_type IN (\'unit\', \'kg\', \'l\'))'); } catch (e) {}
+    try { db.exec('ALTER TABLE products DROP COLUMN expiry_date'); } catch (e) {}
+  },
+  // v2: session_id en cash_movements + nuevos tipos (withdrawal, cancel_withdrawal)
+  (db) => {
+    try { db.exec('ALTER TABLE cash_movements ADD COLUMN session_id INTEGER'); } catch (e) {}
+    runRenameSequence(db, () => {
+      db.sqlDb.run('ALTER TABLE cash_movements RENAME TO cm_old');
+      db.sqlDb.run(`CREATE TABLE cash_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cash_register_id INTEGER NOT NULL,
+        session_id INTEGER,
+        type TEXT NOT NULL CHECK(type IN ('opening', 'closing', 'sale', 'expense', 'waste', 'return', 'payment', 'withdrawal', 'cancel_withdrawal')),
+        description TEXT NOT NULL,
+        amount REAL NOT NULL,
+        reference_id INTEGER,
+        reference_type TEXT,
+        created_by INTEGER,
+        created_by_name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
+      try {
+        db.sqlDb.run('INSERT INTO cash_movements SELECT * FROM cm_old');
+      } catch (_) {
+        db.sqlDb.run('INSERT INTO cash_movements (id, cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at) SELECT id, cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at FROM cm_old');
+      }
+      db.sqlDb.run('DROP TABLE cm_old');
+    });
+  },
+  // v3: quita el CHECK de role en users (permite el rol 'inventory')
+  (db) => {
+    runRenameSequence(db, () => {
+      db.sqlDb.run('ALTER TABLE users RENAME TO users_old');
+      db.sqlDb.run('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT \'cashier\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+      db.sqlDb.run('INSERT INTO users SELECT * FROM users_old');
+      db.sqlDb.run('DROP TABLE users_old');
+    });
+  },
+];
+
+function getSchemaVersion(db) {
+  const row = db.prepare('PRAGMA user_version').get();
+  return (row && row.user_version) || 0;
+}
+
+function setSchemaVersion(db, version) {
+  db.sqlDb.run(`PRAGMA user_version = ${version}`);
+}
+
+function runMigrations(db) {
+  let version = getSchemaVersion(db);
+  for (let i = version; i < SCHEMA_MIGRATIONS.length; i++) {
+    try {
+      SCHEMA_MIGRATIONS[i](db);
+      setSchemaVersion(db, i + 1);
+    } catch (e) {
+      console.error(`Error en migración de esquema v${i + 1}:`, e.message);
+      break;
+    }
+  }
 }
 
 function getDB() {
@@ -528,49 +587,20 @@ function getDB() {
 function reloadDB() {
   if (!SQL || !currentDBPath) throw new Error('Database not initialized');
   if (!fs.existsSync(currentDBPath)) throw new Error('Database file not found on disk');
-  
+
   if (db && db.sqlDb) {
     try { db.sqlDb.close(); } catch (e) {}
   }
-  
+
   db = null;
-  
+
   const fileBuffer = fs.readFileSync(currentDBPath);
   const sqlDb = new SQL.Database(fileBuffer);
-  
+
   db = new DatabaseWrapper(sqlDb);
   db.sqlDb.run('PRAGMA foreign_keys = ON');
 
-  try { db.exec('ALTER TABLE cash_movements ADD COLUMN session_id INTEGER'); } catch (e) {}
-  
-  try {
-    db.exec('ALTER TABLE cash_movements RENAME TO cm_old');
-    db.exec(`CREATE TABLE cash_movements (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      cash_register_id INTEGER NOT NULL,
-      session_id INTEGER,
-      type TEXT NOT NULL CHECK(type IN ('opening', 'closing', 'sale', 'expense', 'waste', 'return', 'payment', 'withdrawal', 'cancel_withdrawal')),
-      description TEXT NOT NULL,
-      amount REAL NOT NULL,
-      reference_id INTEGER,
-      reference_type TEXT,
-      created_by INTEGER,
-      created_by_name TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-    try { db.exec('INSERT INTO cash_movements SELECT * FROM cm_old'); } catch (_) { db.exec('INSERT INTO cash_movements (id, cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at) SELECT id, cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at FROM cm_old'); }
-    db.exec('DROP TABLE cm_old');
-  } catch (e) {}
-  
-  try {
-    db.exec('ALTER TABLE users RENAME TO users_old');
-    db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT \'cashier\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
-    db.exec('INSERT INTO users SELECT * FROM users_old');
-    db.exec('DROP TABLE users_old');
-  } catch (e) {}
-  
-  try { db.exec('ALTER TABLE products ADD COLUMN unit_type TEXT DEFAULT \'unit\' CHECK(unit_type IN (\'unit\', \'kg\', \'l\'))'); } catch (e) {}
-  try { db.exec('ALTER TABLE products DROP COLUMN expiry_date'); } catch (e) {}
+  runMigrations(db);
 
   flushSave();
 }

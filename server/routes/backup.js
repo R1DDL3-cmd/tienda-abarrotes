@@ -26,7 +26,15 @@ router.post('/now', authMiddleware, adminMiddleware, (req, res) => {
 
     let destDir;
     if (destination) {
-      destDir = destination;
+      // Solo se permite elegir una subcarpeta dentro de la carpeta de respaldos del
+      // usuario (evita que un token robado/forjado escriba archivos en rutas
+      // arbitrarias del sistema).
+      const baseDir = getBackupDir();
+      const resolved = path.resolve(baseDir, destination);
+      if (resolved !== baseDir && !resolved.startsWith(baseDir + path.sep)) {
+        return res.status(400).json({ error: 'Destino de respaldo inválido' });
+      }
+      destDir = resolved;
     } else {
       destDir = getBackupDir();
     }
@@ -112,11 +120,22 @@ router.post('/import', authMiddleware, adminMiddleware, (req, res) => {
     const dbPath = getDBPath();
     const buffer = Buffer.from(fileBase64, 'base64');
     if (buffer.length === 0) return res.status(400).json({ error: 'Archivo vacío' });
+    if (buffer.length < 100 || buffer.readUInt8(0) !== 0x53 || buffer.readUInt8(1) !== 0x51 || buffer.readUInt8(2) !== 0x4C || buffer.readUInt8(3) !== 0x69) {
+      return res.status(400).json({ error: 'El archivo no es una base de datos SQLite válida' });
+    }
 
     const backupPath = dbPath + '.pre_import_backup';
     fs.copyFileSync(dbPath, backupPath);
     fs.writeFileSync(dbPath, buffer);
-    reloadDB();
+
+    try {
+      reloadDB();
+    } catch (reloadErr) {
+      // Restaurar el estado anterior automáticamente en vez de dejar la app con una BD rota.
+      fs.copyFileSync(backupPath, dbPath);
+      reloadDB();
+      return res.status(400).json({ error: 'El archivo importado no es una base de datos válida. Se restauró el estado anterior. Detalle: ' + reloadErr.message });
+    }
 
     res.json({ success: true, message: 'Base de datos importada exitosamente. La aplicación se reiniciará.' });
   } catch (e) {

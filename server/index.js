@@ -65,8 +65,13 @@ async function start() {
   app.use('/api/backup', backupRoutes);
   app.use('/api/hardware', hardwareRoutes);
   app.use('/api/events', eventsRoutes);
-  app.use('/api', suppliersRoutes);
 
+  // Debe registrarse ANTES de montar suppliersRoutes en '/api': ese router
+  // aplica router.use(authMiddleware) sin filtro de ruta, así que intercepta
+  // (con 401) cualquier request /api/* que llegue después de él en la pila de
+  // middleware, incluyendo este endpoint público. Antes esto dejaba
+  // /api/network-info inalcanzable — por eso electron/main.js inyectaba la IP
+  // local directamente en el DOM como workaround en vez de usar la API.
   app.get('/api/network-info', (req, res) => {
     const os = require('os');
     const interfaces = os.networkInterfaces();
@@ -81,6 +86,8 @@ async function start() {
     }
     res.json({ ip: localIP, port: PORT });
   });
+
+  app.use('/api', suppliersRoutes);
 
   const frontendPath = path.join(__dirname, '..', 'frontend', 'dist');
   if (fs.existsSync(frontendPath)) {

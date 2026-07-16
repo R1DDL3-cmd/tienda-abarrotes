@@ -82,13 +82,19 @@ router.get('/low-stock', authMiddleware, (req, res) => {
 });
 
 router.get('/expiring', authMiddleware, (req, res) => {
+  // La caducidad se lleva por lote en product_batches (ver /batches/:productId),
+  // no en products.expiry_date — esa columna se eliminó en la migración de esquema v1.
   const db = getDB();
   const thirtyDays = new Date();
   thirtyDays.setDate(thirtyDays.getDate() + 30);
   const dateStr = thirtyDays.toISOString().split('T')[0];
 
   const products = db.prepare(
-    `SELECT * FROM products WHERE expiry_date IS NOT NULL AND expiry_date <= ? AND active = 1 ORDER BY expiry_date ASC`
+    `SELECT p.*, pb.id as batch_id, pb.batch_code, pb.quantity as batch_quantity, pb.expiry_date
+     FROM product_batches pb
+     JOIN products p ON pb.product_id = p.id
+     WHERE pb.expiry_date IS NOT NULL AND pb.expiry_date <= ? AND p.active = 1
+     ORDER BY pb.expiry_date ASC`
   ).all(dateStr);
   res.json({ products });
 });
@@ -202,16 +208,28 @@ router.post('/batches/:productId', authMiddleware, inventoryAdminMiddleware, (re
   const db = getDB();
   const { batch_code, quantity, expiry_date } = req.body;
   if (!quantity || quantity <= 0) return res.status(400).json({ error: 'Cantidad inválida' });
-  const product = db.prepare('SELECT id FROM products WHERE id = ?').get(req.params.productId);
+  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.productId);
   if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
-  const result = db.prepare(
-    'INSERT INTO product_batches (product_id, batch_code, quantity, expiry_date) VALUES (?, ?, ?, ?)'
-  ).run(req.params.productId, batch_code || null, quantity, expiry_date || null);
-  db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(quantity, req.params.productId);
-  db.prepare(
-    'INSERT INTO inventory_movements (product_id, type, quantity, stock_before, stock_after, reference_type, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(req.params.productId, 'in', quantity, parseFloat(product.stock || 0), parseFloat(product.stock || 0) + quantity, 'batch', 'Lote: ' + (batch_code || 'N/A') + (expiry_date ? ' Caduca: ' + expiry_date : ''), req.user.id);
-  const batch = db.prepare('SELECT * FROM product_batches WHERE id = ?').get(result.lastInsertRowid);
+
+  let batchId;
+  const transaction = db.transaction(() => {
+    const result = db.prepare(
+      'INSERT INTO product_batches (product_id, batch_code, quantity, expiry_date) VALUES (?, ?, ?, ?)'
+    ).run(req.params.productId, batch_code || null, quantity, expiry_date || null);
+    batchId = result.lastInsertRowid;
+    db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(quantity, req.params.productId);
+    db.prepare(
+      'INSERT INTO inventory_movements (product_id, type, quantity, stock_before, stock_after, reference_type, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(req.params.productId, 'in', quantity, parseFloat(product.stock || 0), parseFloat(product.stock || 0) + quantity, 'batch', 'Lote: ' + (batch_code || 'N/A') + (expiry_date ? ' Caduca: ' + expiry_date : ''), req.user.id);
+  });
+
+  try {
+    transaction();
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al registrar el lote: ' + e.message });
+  }
+
+  const batch = db.prepare('SELECT * FROM product_batches WHERE id = ?').get(batchId);
   res.status(201).json(batch);
 });
 
@@ -224,8 +242,18 @@ router.delete('/batches/:batchId', authMiddleware, inventoryAdminMiddleware, (re
   if (product.stock < batch.quantity) {
     return res.status(400).json({ error: `Stock insuficiente para eliminar lote: ${product.name} tiene ${product.stock}, el lote tiene ${batch.quantity}` });
   }
-  db.prepare('DELETE FROM product_batches WHERE id = ?').run(req.params.batchId);
-  db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').run(batch.quantity, batch.product_id);
+
+  const transaction = db.transaction(() => {
+    db.prepare('DELETE FROM product_batches WHERE id = ?').run(req.params.batchId);
+    db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').run(batch.quantity, batch.product_id);
+  });
+
+  try {
+    transaction();
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al eliminar el lote: ' + e.message });
+  }
+
   res.json({ success: true });
 });
 

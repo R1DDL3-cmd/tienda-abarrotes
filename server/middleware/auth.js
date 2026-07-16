@@ -1,20 +1,24 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
+// El secreto se genera una sola vez por instalación (nunca un valor fijo en
+// el código): un secreto constante permitiría forjar tokens de admin sin
+// credenciales en CUALQUIER instalación del software, ya que el .asar
+// empaquetado es trivialmente extraíble.
 function loadSecret() {
   const configPath = path.join(__dirname, '..', '..', 'data', '.secret');
   try {
-    if (fs.existsSync(configPath)) {
-      return fs.readFileSync(configPath, 'utf8').trim();
-    }
+    const existing = fs.readFileSync(configPath, 'utf8').trim();
+    if (existing) return existing;
   } catch (e) {}
-  const secret = 'tienda-abarrotes-secret-key-2024';
+  const secret = crypto.randomBytes(48).toString('hex');
   try {
     if (!fs.existsSync(path.dirname(configPath))) {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
     }
-    fs.writeFileSync(configPath, secret, 'utf8');
+    fs.writeFileSync(configPath, secret, { encoding: 'utf8', mode: 0o600 });
   } catch (e) {}
   return secret;
 }
