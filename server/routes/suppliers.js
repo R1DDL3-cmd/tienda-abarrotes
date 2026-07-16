@@ -131,11 +131,9 @@ router.get('/suppliers/:id/suggested-order', (req, res) => {
     const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(req.params.id);
     if (!supplier) return res.status(404).json({ error: 'Proveedor no encontrado' });
 
-    // products.supplier es texto libre (no FK) — se relaciona con el proveedor
-    // por nombre, igual que ya hace /suppliers/sync-from-products.
     const supplierProducts = db.prepare(
-      `SELECT id, name, barcode, stock, min_stock, purchase_price FROM products WHERE active = 1 AND TRIM(LOWER(supplier)) = TRIM(LOWER(?))`
-    ).all(supplier.name);
+      `SELECT id, name, barcode, stock, min_stock, purchase_price FROM products WHERE active = 1 AND supplier_id = ?`
+    ).all(req.params.id);
     const productIds = new Set(supplierProducts.map(p => p.id));
 
     const predictions = predictAll(db);

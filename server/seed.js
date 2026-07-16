@@ -34,6 +34,21 @@ function importProductsFromExcel(db) {
       categoryMap[name] = cat.id;
     }
 
+    // Vincular cada producto a un proveedor real (no solo el texto de la
+    // columna) para que buscar productos de un proveedor en Compras
+    // funcione desde el primer arranque, sin depender de una migración
+    // posterior sobre datos ya existentes.
+    const supplierNames = [...new Set(products.map(r => (r[17] || '').toString().trim()).filter(Boolean))];
+    const supplierMap = {};
+    for (const name of supplierNames) {
+      let sup = db.prepare('SELECT id FROM suppliers WHERE LOWER(name) = LOWER(?)').get(name);
+      if (!sup) {
+        const result = db.prepare('INSERT INTO suppliers (name, notes) VALUES (?, ?)').run(name, 'Importado de productos');
+        sup = { id: result.lastInsertRowid };
+      }
+      supplierMap[name] = sup.id;
+    }
+
     function normalizeUnit(u) {
       if (!u) return 'unit';
       const val = u.trim().toLowerCase();
@@ -42,13 +57,14 @@ function importProductsFromExcel(db) {
       return 'unit';
     }
 
-    const insert = db.prepare(`INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, unit_type, active) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    const insert = db.prepare(`INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, supplier_id, unit_type, active) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
     let count = 0;
     for (const row of products) {
       const barcode = (row[0] || '').toString().trim();
       const name = (row[1] || '').trim();
       if (!barcode && !name) continue;
       const categoryName = (row[2] || '').trim();
+      const supplierName = (row[17] || '').toString().trim();
       const existing = db.prepare('SELECT id FROM products WHERE barcode = ?').get(barcode);
       if (existing) continue;
       insert.run(
@@ -59,7 +75,8 @@ function importProductsFromExcel(db) {
         parseFloat(row[4]) || 0,
         parseInt(row[22]) || 0,
         parseInt(row[10]) || 0,
-        (row[17] || '').trim() || null,
+        supplierName || null,
+        supplierName ? supplierMap[supplierName] || null : null,
         normalizeUnit(row[9]),
         parseInt(row[16]) === 1 ? 0 : 1
       );

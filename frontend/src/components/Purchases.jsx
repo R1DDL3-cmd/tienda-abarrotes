@@ -37,11 +37,13 @@ export default function Purchases({ user }) {
   useEffect(() => { if (products.length === 0) loadProducts() }, [])
 
   useEffect(() => {
+    // Antes esto comparaba el texto libre products.supplier contra el nombre
+    // del proveedor — casi nunca coincidía exacto y la búsqueda parecía no
+    // funcionar. Ahora se usa el vínculo real supplier_id.
     if (productSearch && products.length > 0 && purchaseForm.supplier_id) {
       const q = productSearch.toLowerCase()
-      const supplierName = (suppliers.find(s => s.id === purchaseForm.supplier_id)?.name || '').toLowerCase()
       setFilteredProducts(products.filter(p => {
-        const matchesSupplier = (p.supplier || '').toLowerCase() === supplierName
+        const matchesSupplier = p.supplier_id === purchaseForm.supplier_id
         const matchesSearch = p.name.toLowerCase().includes(q) || (p.barcode && p.barcode.includes(q))
         return matchesSupplier && matchesSearch
       }))

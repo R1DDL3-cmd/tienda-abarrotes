@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { products, accounting } from '../api'
+import { products, accounting, suppliers as suppliersApi } from '../api'
 import { formatDateTime, formatDate, formatCalendarDate } from '../dateUtils'
 import { getTheme, toggleTheme } from '../theme'
 
@@ -19,6 +19,7 @@ export default function Inventory({ user, onLogout }) {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [categories, setCategories] = useState([])
+  const [supplierList, setSupplierList] = useState([])
   const [filterCat, setFilterCat] = useState('')
   const [showLowStock, setShowLowStock] = useState(false)
   const [showForm, setShowForm] = useState(false)
@@ -61,9 +62,12 @@ export default function Inventory({ user, onLogout }) {
   const loadCategories = async () => {
     try { const res = await products.categories(); setCategories(res.categories) } catch (e) {}
   }
+  const loadSuppliers = async () => {
+    try { const res = await suppliersApi.list(); setSupplierList(res) } catch (e) {}
+  }
   useEffect(() => { loadProducts(); const interval = setInterval(loadProducts, 30000); return () => clearInterval(interval) }, [loadProducts])
 
-  useEffect(() => { loadCategories() }, [])
+  useEffect(() => { loadCategories(); loadSuppliers() }, [])
 
   const openCategoriesModal = () => {
     loadCategories()
@@ -100,7 +104,7 @@ export default function Inventory({ user, onLogout }) {
 
   const openNew = () => {
     setEditingProduct(null)
-    setForm({ name: '', barcode: '', category_id: '', purchase_price: '', sale_price: '', stock: '', min_stock: '', supplier: '', unit_type: 'unit', sellable_individually: false, units_per_package: '', individual_price: '' })
+    setForm({ name: '', barcode: '', category_id: '', purchase_price: '', sale_price: '', stock: '', min_stock: '', supplier_id: '', unit_type: 'unit', sellable_individually: false, units_per_package: '', individual_price: '' })
     setError('')
     setShowForm(true)
   }
@@ -114,7 +118,7 @@ export default function Inventory({ user, onLogout }) {
       sale_price: p.sale_price?.toString() || '',
       stock: p.stock?.toString() || '',
       min_stock: p.min_stock?.toString() || '',
-      supplier: p.supplier || '',
+      supplier_id: p.supplier_id?.toString() || '',
       unit_type: p.unit_type || 'unit',
       sellable_individually: !!p.sellable_individually,
       units_per_package: p.units_per_package?.toString() || '',
@@ -140,7 +144,7 @@ export default function Inventory({ user, onLogout }) {
         sale_price: parseFloat(form.sale_price) || 0,
         stock: parseFloat(form.stock) || 0,
         min_stock: parseFloat(form.min_stock) || 0,
-        supplier: form.supplier || null,
+        supplier_id: form.supplier_id ? parseInt(form.supplier_id) : null,
         unit_type: form.unit_type || 'unit',
         sellable_individually: !!form.sellable_individually,
         units_per_package: form.sellable_individually ? parseInt(form.units_per_package) || null : null,
@@ -467,7 +471,10 @@ export default function Inventory({ user, onLogout }) {
               </div>
               <div className="form-group">
                 <label>Proveedor</label>
-                <input type="text" value={form.supplier} onChange={e => setForm({...form, supplier: e.target.value})} />
+                <select value={form.supplier_id} onChange={e => setForm({...form, supplier_id: e.target.value})}>
+                  <option value="">Sin proveedor</option>
+                  {supplierList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
               </div>
               <div className="form-group">
                 <label>Tipo de Venta</label>

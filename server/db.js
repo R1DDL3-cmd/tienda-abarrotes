@@ -604,6 +604,35 @@ const SCHEMA_MIGRATIONS = [
     try { db.exec('ALTER TABLE sale_items ADD COLUMN is_individual INTEGER DEFAULT 0'); } catch (e) {}
     try { db.exec('ALTER TABLE sale_items ADD COLUMN stock_delta REAL'); } catch (e) {}
   },
+  // v9: vínculo real producto->proveedor. products.supplier era solo texto
+  // libre, nunca una referencia real a la tabla suppliers — por eso buscar
+  // productos de un proveedor al armar un pedido de compra no funcionaba
+  // (comparaba el texto contra el nombre del proveedor y casi nunca
+  // coincidía exacto). Se reconcilian los datos existentes por nombre como
+  // mejor esfuerzo; products.supplier se conserva como texto de respaldo
+  // para productos que no logren enlazarse a ningún proveedor real.
+  (db) => {
+    try { db.exec('ALTER TABLE products ADD COLUMN supplier_id INTEGER'); } catch (e) {}
+    try { db.exec('CREATE INDEX IF NOT EXISTS idx_products_supplier_id ON products(supplier_id)'); } catch (e) {}
+    try {
+      // Crear primero los proveedores que falten a partir del texto libre
+      // (mismo criterio que /suppliers/sync-from-products), para poder
+      // enlazar la mayor cantidad de productos posible de una sola vez.
+      const distinctSuppliers = db.prepare(
+        "SELECT DISTINCT TRIM(supplier) as name FROM products WHERE supplier IS NOT NULL AND TRIM(supplier) != ''"
+      ).all();
+      for (const s of distinctSuppliers) {
+        const existing = db.prepare('SELECT id FROM suppliers WHERE LOWER(name) = LOWER(?)').get(s.name);
+        if (!existing) db.prepare('INSERT INTO suppliers (name, notes) VALUES (?, ?)').run(s.name, 'Importado de productos');
+      }
+      const products = db.prepare("SELECT id, supplier FROM products WHERE supplier IS NOT NULL AND TRIM(supplier) != '' AND supplier_id IS NULL").all();
+      const updateSupplierId = db.prepare('UPDATE products SET supplier_id = ? WHERE id = ?');
+      for (const p of products) {
+        const match = db.prepare('SELECT id FROM suppliers WHERE LOWER(name) = LOWER(?)').get(p.supplier.trim());
+        if (match) updateSupplierId.run(match.id, p.id);
+      }
+    } catch (e) {}
+  },
 ];
 
 function getSchemaVersion(db) {
