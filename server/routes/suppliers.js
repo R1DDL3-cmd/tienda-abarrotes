@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../db');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { predictAll } = require('../services/predictions');
 
 router.use(authMiddleware);
 router.use(adminMiddleware);
@@ -119,6 +120,54 @@ router.get('/suppliers/:id/purchases', (req, res) => {
     const db = getDB();
     const purchases = db.prepare(`SELECT p.*, s.name AS supplier_name FROM purchases p JOIN suppliers s ON s.id = p.supplier_id WHERE p.supplier_id = ? ORDER BY p.created_at DESC`).all(req.params.id);
     res.json(purchases);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.get('/suppliers/:id/suggested-order', (req, res) => {
+  try {
+    const db = getDB();
+    const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(req.params.id);
+    if (!supplier) return res.status(404).json({ error: 'Proveedor no encontrado' });
+
+    // products.supplier es texto libre (no FK) — se relaciona con el proveedor
+    // por nombre, igual que ya hace /suppliers/sync-from-products.
+    const supplierProducts = db.prepare(
+      `SELECT id, name, barcode, stock, min_stock, purchase_price FROM products WHERE active = 1 AND TRIM(LOWER(supplier)) = TRIM(LOWER(?))`
+    ).all(supplier.name);
+    const productIds = new Set(supplierProducts.map(p => p.id));
+
+    const predictions = predictAll(db);
+    const predictionByProduct = {};
+    for (const p of predictions) predictionByProduct[p.product_id] = p;
+
+    const items = supplierProducts
+      .map(p => {
+        const pred = predictionByProduct[p.id];
+        // Fallback para productos sin historial de ventas suficiente: el motor
+        // de predicciones devuelve suggested_order = 0 en ese caso (no hay
+        // datos con qué pronosticar). Solo aplica si el stock ya está en o
+        // por debajo del mínimo configurado (mismo criterio que /low-stock),
+        // y busca llegar al doble del mínimo.
+        const isLowStock = p.min_stock > 0 && p.stock <= p.min_stock;
+        const fallbackQty = isLowStock ? Math.max(0, (p.min_stock * 2) - p.stock) : 0;
+        const suggestedQty = (pred && pred.suggested_order > 0) ? pred.suggested_order : fallbackQty;
+        return {
+          product_id: p.id,
+          product_name: p.name,
+          barcode: p.barcode,
+          current_stock: p.stock,
+          min_stock: p.min_stock,
+          unit_price: p.purchase_price || 0,
+          suggested_quantity: Math.ceil(suggestedQty),
+          days_until_stockout: pred ? pred.days_until_stockout : null
+        };
+      })
+      .filter(i => i.suggested_quantity > 0)
+      .sort((a, b) => (a.days_until_stockout ?? 999) - (b.days_until_stockout ?? 999));
+
+    res.json({ supplier, items });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

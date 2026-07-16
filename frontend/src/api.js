@@ -188,6 +188,7 @@ export const suppliers = {
   remove: (id) => request(`/suppliers/${id}`, { method: 'DELETE' }),
   purchases: (id) => request(`/suppliers/${id}/purchases`),
   syncFromProducts: () => request('/suppliers/sync-from-products', { method: 'POST' }),
+  suggestedOrder: (id) => request(`/suppliers/${id}/suggested-order`),
 };
 
 export const purchases = {

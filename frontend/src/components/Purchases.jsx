@@ -119,6 +119,21 @@ export default function Purchases({ user }) {
     setPurchaseForm(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }))
   }
 
+  const handleSuggestProducts = async () => {
+    try {
+      const data = await suppliersApi.suggestedOrder(purchaseForm.supplier_id)
+      if (data.items.length === 0) { setError('No hay productos de este proveedor con reposición sugerida ahora mismo'); return }
+      setPurchaseForm(prev => {
+        const existingIds = new Set(prev.items.map(i => i.product_id))
+        const newItems = data.items
+          .filter(i => !existingIds.has(i.product_id))
+          .map(i => ({ product_id: i.product_id, product_name: i.product_name, quantity: i.suggested_quantity, unit_price: i.unit_price, subtotal: i.suggested_quantity * i.unit_price }))
+        return { ...prev, items: [...prev.items, ...newItems] }
+      })
+      setError('')
+    } catch (e) { setError(e.message) }
+  }
+
   const updateItem = (idx, field, value) => {
     const items = [...purchaseForm.items]
     items[idx] = { ...items[idx], [field]: value }
@@ -195,6 +210,61 @@ export default function Purchases({ user }) {
     } catch (e) { setError(e.message) }
   }
 
+  const printPurchase = (purchase) => {
+    const win = window.open('', '_blank', 'width=700,height=900')
+    if (!win) { setError('El navegador bloqueó la ventana de impresión'); return }
+    const fecha = new Date(purchase.created_at + 'Z').toLocaleDateString('es-MX', { dateStyle: 'long', timeZone: 'America/Mexico_City' })
+    const rows = purchase.items.map(item => `
+      <tr>
+        <td>${item.product_name}${item.barcode ? ` (${item.barcode})` : ''}</td>
+        <td style="text-align:right">${item.quantity}</td>
+        <td style="text-align:right">$${(item.unit_price || 0).toFixed(2)}</td>
+        <td style="text-align:right">$${(item.subtotal || 0).toFixed(2)}</td>
+      </tr>`).join('')
+    win.document.write(`
+      <html>
+        <head>
+          <title>Pedido #${purchase.id} - ${purchase.supplier_name}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+            h1 { font-size: 1.3rem; margin-bottom: 0; }
+            .meta { color: #555; margin-bottom: 1rem; }
+            table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+            th, td { border-bottom: 1px solid #ddd; padding: 6px 8px; font-size: 0.9rem; }
+            th { text-align: left; background: #f3f3f3; }
+            .totals { margin-top: 1rem; text-align: right; }
+            .totals div { margin: 2px 0; }
+            .total-final { font-weight: bold; font-size: 1.1rem; }
+            .notes { margin-top: 1.5rem; border-top: 1px dashed #999; padding-top: 0.5rem; }
+          </style>
+        </head>
+        <body>
+          <h1>Pedido a proveedor #${purchase.id}</h1>
+          <div class="meta">
+            <div><strong>Proveedor:</strong> ${purchase.supplier_name}</div>
+            ${purchase.supplier_contact ? `<div><strong>Contacto:</strong> ${purchase.supplier_contact}</div>` : ''}
+            ${purchase.supplier_phone ? `<div><strong>Teléfono:</strong> ${purchase.supplier_phone}</div>` : ''}
+            <div><strong>Fecha:</strong> ${fecha}</div>
+            ${purchase.invoice_number ? `<div><strong>Factura/Folio:</strong> ${purchase.invoice_number}</div>` : ''}
+          </div>
+          <table>
+            <thead><tr><th>Producto</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Precio</th><th style="text-align:right">Subtotal</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="totals">
+            <div>Subtotal: $${(purchase.subtotal || 0).toFixed(2)}</div>
+            <div>IVA (16%): $${(purchase.tax || 0).toFixed(2)}</div>
+            <div class="total-final">Total: $${(purchase.total || 0).toFixed(2)}</div>
+          </div>
+          ${purchase.notes ? `<div class="notes"><strong>Notas:</strong> ${purchase.notes}</div>` : ''}
+        </body>
+      </html>
+    `)
+    win.document.close()
+    win.focus()
+    win.print()
+  }
+
   const statusBadge = (status) => {
     const map = { pending: 'badge-warning', completed: 'badge-success', cancelled: 'badge-error' }
     const labels = { pending: 'Pendiente', completed: 'Completada', cancelled: 'Cancelada' }
@@ -260,6 +330,7 @@ export default function Purchases({ user }) {
                         <td>{new Date(p.created_at + 'Z').toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'America/Mexico_City' })}</td>
                         <td>
                           <button className="btn btn-sm btn-outline" onClick={() => viewDetail(p.id)}>Ver</button>
+                          <button className="btn btn-sm btn-outline" onClick={async () => { try { printPurchase(await purchasesApi.get(p.id)) } catch (e) { setError(e.message) } }}>Imprimir</button>
                           {p.status === 'pending' && <button className="btn btn-sm btn-success" onClick={() => openReceivePurchase(p.id)}>Recibir</button>}
                           {p.status !== 'cancelled' && <button className="btn btn-sm btn-danger" onClick={() => handleCancelPurchase(p.id)}>Cancelar</button>}
                         </td>
@@ -341,6 +412,9 @@ export default function Purchases({ user }) {
             </div>
 
             <h4>Productos</h4>
+            <div className="modal-actions" style={{justifyContent: 'flex-start', marginBottom: '0.5rem'}}>
+              <button type="button" className="btn btn-sm btn-outline" onClick={handleSuggestProducts}>Sugerir productos a reponer</button>
+            </div>
             <div className="product-global-search">
               <input type="text" className="input" placeholder="Buscar producto del proveedor y agregar..." value={productSearch} onChange={e => setProductSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') setShowProductDropdown(false) }} autoFocus />
               {showProductDropdown && filteredProducts.length > 0 && (
@@ -478,6 +552,7 @@ export default function Purchases({ user }) {
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setShowDetailModal(false)}>Cerrar</button>
+              <button className="btn btn-primary" onClick={() => printPurchase(detailPurchase)}>Imprimir</button>
             </div>
           </div>
         </div>
