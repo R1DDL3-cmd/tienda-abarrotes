@@ -93,7 +93,7 @@ export default function Inventory({ user, onLogout }) {
 
   const openNew = () => {
     setEditingProduct(null)
-    setForm({ name: '', barcode: '', category_id: '', purchase_price: '', sale_price: '', stock: '', min_stock: '', supplier: '', unit_type: 'unit' })
+    setForm({ name: '', barcode: '', category_id: '', purchase_price: '', sale_price: '', stock: '', min_stock: '', supplier: '', unit_type: 'unit', sellable_individually: false, units_per_package: '', individual_price: '' })
     setError('')
     setShowForm(true)
   }
@@ -108,7 +108,10 @@ export default function Inventory({ user, onLogout }) {
       stock: p.stock?.toString() || '',
       min_stock: p.min_stock?.toString() || '',
       supplier: p.supplier || '',
-      unit_type: p.unit_type || 'unit'
+      unit_type: p.unit_type || 'unit',
+      sellable_individually: !!p.sellable_individually,
+      units_per_package: p.units_per_package?.toString() || '',
+      individual_price: p.individual_price?.toString() || ''
     })
     setError('')
     setShowForm(true)
@@ -116,6 +119,10 @@ export default function Inventory({ user, onLogout }) {
 
   const handleSave = async () => {
     if (!form.name || !form.sale_price) { setError('Nombre y precio de venta requeridos'); return }
+    if (form.sellable_individually && (!form.units_per_package || !form.individual_price)) {
+      setError('Indica unidades por paquete y precio individual')
+      return
+    }
     setError('')
     try {
       const data = {
@@ -127,7 +134,10 @@ export default function Inventory({ user, onLogout }) {
         stock: parseFloat(form.stock) || 0,
         min_stock: parseFloat(form.min_stock) || 0,
         supplier: form.supplier || null,
-        unit_type: form.unit_type || 'unit'
+        unit_type: form.unit_type || 'unit',
+        sellable_individually: !!form.sellable_individually,
+        units_per_package: form.sellable_individually ? parseInt(form.units_per_package) || null : null,
+        individual_price: form.sellable_individually ? parseFloat(form.individual_price) || null : null
       }
       if (editingProduct) {
         await products.update(editingProduct.id, data)
@@ -453,6 +463,25 @@ export default function Inventory({ user, onLogout }) {
                 </select>
               </div>
             </div>
+
+            <div className="form-group" style={{marginTop:'0.5rem'}}>
+              <label style={{display:'flex', alignItems:'center', gap:'0.5rem', fontWeight:'normal'}}>
+                <input type="checkbox" checked={form.sellable_individually} onChange={e => setForm({...form, sellable_individually: e.target.checked})} />
+                Se puede vender por unidad individual (ej. cigarros sueltos de una cajetilla)
+              </label>
+            </div>
+            {form.sellable_individually && (
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Unidades individuales por paquete</label>
+                  <input type="number" min="1" step="1" value={form.units_per_package} onChange={e => setForm({...form, units_per_package: e.target.value})} placeholder="Ej. 20" />
+                </div>
+                <div className="form-group">
+                  <label>Precio por unidad individual</label>
+                  <input type="number" min="0" step="0.01" value={form.individual_price} onChange={e => setForm({...form, individual_price: e.target.value})} placeholder="Ej. 3.00" />
+                </div>
+              </div>
+            )}
             {error && <div className="alert alert-error" style={{marginTop:'0.5rem'}}>{error}</div>}
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => { setShowForm(false); setError('') }}>Cancelar</button>

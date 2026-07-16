@@ -54,6 +54,8 @@ export default function POS({ user, onLogout }) {
   const [showCashCountModal, setShowCashCountModal] = useState(false)
   const [cashCountAmount, setCashCountAmount] = useState('')
   const [showSecurityModal, setShowSecurityModal] = useState(false)
+  const [individualChoice, setIndividualChoice] = useState(null)
+  const [individualQty, setIndividualQty] = useState('1')
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [offlineQueue, setOfflineQueue] = useState([])
   const [showQueueModal, setShowQueueModal] = useState(false)
@@ -148,20 +150,20 @@ export default function POS({ user, onLogout }) {
 
   useEffect(() => {
     const onFocus = () => {
-      if (barcodeRef.current && !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal) {
+      if (barcodeRef.current && !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal && !individualChoice) {
         barcodeRef.current.focus()
       }
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [showStartDayModal, showEndDayModal, showWithdrawalModal, showWithdrawalsList, showLogoutConfirm, showCashCountModal, paymentModal, customerModal, historyModal, cancelModal, newCustomerModal, showSecurityModal])
+  }, [showStartDayModal, showEndDayModal, showWithdrawalModal, showWithdrawalsList, showLogoutConfirm, showCashCountModal, paymentModal, customerModal, historyModal, cancelModal, newCustomerModal, showSecurityModal, individualChoice])
 
   useEffect(() => {
-    const noModal = !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal
+    const noModal = !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal && !individualChoice
     if (noModal) {
       setTimeout(() => { if (barcodeRef.current) barcodeRef.current.focus() }, 50)
     }
-  }, [showStartDayModal, showEndDayModal, showWithdrawalModal, showWithdrawalsList, showLogoutConfirm, showCashCountModal, paymentModal, customerModal, historyModal, cancelModal, newCustomerModal, showSecurityModal, saleDone, error, success])
+  }, [showStartDayModal, showEndDayModal, showWithdrawalModal, showWithdrawalsList, showLogoutConfirm, showCashCountModal, paymentModal, customerModal, historyModal, cancelModal, newCustomerModal, showSecurityModal, individualChoice, saleDone, error, success])
 
   useEffect(() => {
     if (showCashCountModal) {
@@ -201,7 +203,7 @@ export default function POS({ user, onLogout }) {
   // de código de barras, para no interferir con formularios ni con el
   // escaneo normal (los lectores de código de barras no envían teclas F).
   useEffect(() => {
-    const noModal = !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal
+    const noModal = !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal && !individualChoice
     const shortcuts = getShortcuts()
     const onKeyDown = (e) => {
       const tag = e.target.tagName
@@ -215,7 +217,7 @@ export default function POS({ user, onLogout }) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [showStartDayModal, paymentModal, customerModal, historyModal, showEndDayModal, showWithdrawalModal, showWithdrawalsList, showLogoutConfirm, showCashCountModal, cancelModal, newCustomerModal, showSecurityModal, showSearch, cart, total])
+  }, [showStartDayModal, paymentModal, customerModal, historyModal, showEndDayModal, showWithdrawalModal, showWithdrawalsList, showLogoutConfirm, showCashCountModal, cancelModal, newCustomerModal, showSecurityModal, individualChoice, showSearch, cart, total])
 
   const handleBarcode = useCallback(async (value) => {
     if (!value) return
@@ -228,7 +230,7 @@ export default function POS({ user, onLogout }) {
     }
     try {
       const product = await products.getByBarcode(code)
-      addToCart(product, qty)
+      tryAddToCart(product, qty)
       setBarcode('')
       setError('')
     } catch (e) {
@@ -270,12 +272,16 @@ export default function POS({ user, onLogout }) {
     }
   }
 
-  const addToCart = (product, qty) => {
+  const addToCart = (product, qty, isIndividual = false) => {
     const quantity = qty || 1
+    const unitPrice = isIndividual ? product.individual_price : product.sale_price
     setCart(prev => {
-      const existing = prev.find(i => i.product_id === product.id)
+      // Una línea de venta individual (piezas sueltas) NUNCA se junta con una
+      // de paquete completo del mismo producto — tienen precio y efecto en
+      // stock distintos (fracción de paquete vs paquete entero).
+      const existing = prev.find(i => i.product_id === product.id && !!i.is_individual === isIndividual)
       if (existing && product.unit_type !== 'kg' && product.unit_type !== 'l') {
-        return prev.map(i => i.product_id === product.id
+        return prev.map(i => i === existing
           ? { ...i, quantity: i.quantity + quantity, subtotal: (i.quantity + quantity) * i.unit_price - i.discount }
           : i
         )
@@ -285,19 +291,38 @@ export default function POS({ user, onLogout }) {
         product_id: product.id,
         product_name: product.name,
         barcode: product.barcode,
-        unit_price: product.sale_price,
+        unit_price: unitPrice,
         quantity: itemQty,
         discount: 0,
-        subtotal: itemQty * product.sale_price,
+        subtotal: itemQty * unitPrice,
         stock: product.stock,
-        unit_type: product.unit_type || 'unit'
+        unit_type: product.unit_type || 'unit',
+        is_individual: isIndividual
       }]
     })
   }
 
-  const updateCartItem = (id, field, value) => {
+  // Productos vendibles por unidad individual (ej. cigarros sueltos de una
+  // cajetilla) preguntan cómo se quiere vender antes de agregarlos al
+  // carrito, en vez de asumir siempre paquete completo.
+  const tryAddToCart = (product, qty = 1) => {
+    if (product.sellable_individually) {
+      setIndividualChoice({ product, qty })
+      setIndividualQty('1')
+    } else {
+      addToCart(product, qty)
+    }
+  }
+
+  const confirmIndividualChoice = (isIndividual) => {
+    const { product, qty } = individualChoice
+    addToCart(product, isIndividual ? (parseInt(individualQty) || 1) : qty, isIndividual)
+    setIndividualChoice(null)
+  }
+
+  const updateCartItem = (id, field, value, isIndividual = false) => {
     setCart(prev => prev.map(i => {
-      if (i.product_id !== id) return i
+      if (i.product_id !== id || !!i.is_individual !== isIndividual) return i
       if (user?.role === 'cashier' && (field === 'unit_price' || field === 'discount')) return i
       const updated = { ...i, [field]: value }
       updated.subtotal = (updated.quantity * updated.unit_price) - updated.discount
@@ -305,7 +330,7 @@ export default function POS({ user, onLogout }) {
     }))
   }
 
-  const removeFromCart = (id) => setCart(prev => prev.filter(i => i.product_id !== id))
+  const removeFromCart = (id, isIndividual = false) => setCart(prev => prev.filter(i => !(i.product_id === id && !!i.is_individual === isIndividual)))
 
   const handleSearch = async (q) => {
     setSearchQuery(q)
@@ -317,7 +342,7 @@ export default function POS({ user, onLogout }) {
   }
 
   const selectSearchResult = (product) => {
-    addToCart(product)
+    tryAddToCart(product)
     setShowSearch(false)
     setSearchQuery('')
     setSearchResults([])
@@ -365,7 +390,8 @@ export default function POS({ user, onLogout }) {
         product_id: i.product_id,
         quantity: i.quantity,
         unit_price: i.unit_price,
-        discount: i.discount
+        discount: i.discount,
+        is_individual: !!i.is_individual
       })),
       payments: payments.map(p => ({ method: p.method, amount: parseFloat(p.amount) || 0 })),
       discount: totalDiscount,
@@ -836,16 +862,16 @@ export default function POS({ user, onLogout }) {
                         const qtyMin = isWeight ? 0.1 : 1
                         const isCashier = user?.role === 'cashier'
                         return (
-                        <tr key={item.product_id}>
-                          <td>{item.product_name}</td>
+                        <tr key={`${item.product_id}_${item.is_individual ? 'ind' : 'pkg'}`}>
+                          <td>{item.product_name}{item.is_individual && <span className="text-muted" style={{fontSize:'0.75rem'}}> (pieza)</span>}</td>
                           <td className="qty-cell">
-                            <input type="number" className="qty-input" min={qtyMin} step={qtyStep} value={item.quantity} onChange={(e) => updateCartItem(item.product_id, 'quantity', parseFloat(e.target.value) || 0)} />
+                            <input type="number" className="qty-input" min={qtyMin} step={qtyStep} value={item.quantity} onChange={(e) => updateCartItem(item.product_id, 'quantity', parseFloat(e.target.value) || 0, item.is_individual)} />
                             {unitLabel && <span className="unit-label">{unitLabel}</span>}
                           </td>
-                          <td>{isCashier ? <span className="price-display">{formatMoney(item.unit_price)}</span> : <input type="number" className="price-input" step={isWeight ? "0.01" : "1"} value={item.unit_price} onChange={(e) => updateCartItem(item.product_id, 'unit_price', parseFloat(e.target.value) || 0)} />}</td>
-                          <td>{isCashier ? <span className="price-display">$0.00</span> : <input type="number" className="disc-input" step="0.01" value={item.discount} disabled={isCashier} onChange={(e) => updateCartItem(item.product_id, 'discount', parseFloat(e.target.value) || 0)} />}</td>
+                          <td>{isCashier ? <span className="price-display">{formatMoney(item.unit_price)}</span> : <input type="number" className="price-input" step={isWeight ? "0.01" : "1"} value={item.unit_price} onChange={(e) => updateCartItem(item.product_id, 'unit_price', parseFloat(e.target.value) || 0, item.is_individual)} />}</td>
+                          <td>{isCashier ? <span className="price-display">$0.00</span> : <input type="number" className="disc-input" step="0.01" value={item.discount} disabled={isCashier} onChange={(e) => updateCartItem(item.product_id, 'discount', parseFloat(e.target.value) || 0, item.is_individual)} />}</td>
                           <td className="subtotal-cell">{formatMoney(item.subtotal)}</td>
-                          <td><button className="btn btn-danger btn-sm" onClick={() => removeFromCart(item.product_id)}>X</button></td>
+                          <td><button className="btn btn-danger btn-sm" onClick={() => removeFromCart(item.product_id, item.is_individual)}>X</button></td>
                         </tr>
                       )})}
                     </tbody>
@@ -988,6 +1014,32 @@ export default function POS({ user, onLogout }) {
                   {salesHistory.length === 0 && <tr><td colSpan="7" className="text-center">Sin ventas hoy</td></tr>}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {individualChoice && (
+        <div className="modal-overlay" onClick={() => setIndividualChoice(null)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <h3>{individualChoice.product.name}</h3>
+            <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
+              Este producto se puede vender por paquete completo o por pieza suelta. ¿Cómo lo vendes?
+            </p>
+            <div className="modal-actions" style={{flexDirection:'column', gap:'0.5rem'}}>
+              <button className="btn btn-primary btn-block" onClick={() => confirmIndividualChoice(false)}>
+                Paquete completo — ${(individualChoice.product.sale_price || 0).toFixed(2)}
+              </button>
+              <div style={{display:'flex', gap:'0.5rem', alignItems:'center', width:'100%'}}>
+                <input
+                  type="number" className="input" min="1" step="1" value={individualQty}
+                  onChange={e => setIndividualQty(e.target.value)}
+                  style={{width:'70px'}}
+                />
+                <button className="btn btn-secondary" style={{flex:1}} onClick={() => confirmIndividualChoice(true)}>
+                  Individual — ${(individualChoice.product.individual_price || 0).toFixed(2)} c/u
+                </button>
+              </div>
             </div>
           </div>
         </div>

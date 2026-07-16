@@ -146,10 +146,18 @@ router.get('/expiring', authMiddleware, (req, res) => {
 router.post('/', authMiddleware, inventoryAdminMiddleware, (req, res) => {
   try {
     const db = getDB();
-    const { name, barcode, category_id, purchase_price, sale_price, stock, min_stock, supplier, unit_type } = req.body;
+    const { name, barcode, category_id, purchase_price, sale_price, stock, min_stock, supplier, unit_type, sellable_individually, units_per_package, individual_price } = req.body;
 
     if (!name || sale_price === undefined) {
       return res.status(400).json({ error: 'Nombre y precio de venta son requeridos' });
+    }
+    if (sellable_individually) {
+      if (!units_per_package || units_per_package <= 0) {
+        return res.status(400).json({ error: 'Indica cuántas unidades individuales trae cada paquete' });
+      }
+      if (!individual_price || individual_price <= 0) {
+        return res.status(400).json({ error: 'Indica el precio de la unidad individual' });
+      }
     }
 
     const existingBarcode = barcode ? db.prepare('SELECT id FROM products WHERE barcode = ?').get(barcode) : null;
@@ -173,9 +181,10 @@ router.post('/', authMiddleware, inventoryAdminMiddleware, (req, res) => {
     }
 
     const result = db.prepare(
-      `INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, unit_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(finalBarcode, name, category_id || null, categoryName, purchase_price || 0, sale_price, stock || 0, min_stock || 0, supplier || null, unit_type || 'unit');
+      `INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, unit_type, sellable_individually, units_per_package, individual_price)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(finalBarcode, name, category_id || null, categoryName, purchase_price || 0, sale_price, stock || 0, min_stock || 0, supplier || null, unit_type || 'unit',
+      sellable_individually ? 1 : 0, sellable_individually ? units_per_package : null, sellable_individually ? individual_price : null);
 
     let productId = result.lastInsertRowid;
     if (!productId || productId === 0) {
@@ -200,7 +209,7 @@ router.post('/', authMiddleware, inventoryAdminMiddleware, (req, res) => {
 
 router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
   const db = getDB();
-  const { name, barcode, category_id, purchase_price, sale_price, stock, min_stock, supplier, unit_type } = req.body;
+  const { name, barcode, category_id, purchase_price, sale_price, stock, min_stock, supplier, unit_type, sellable_individually, units_per_package, individual_price } = req.body;
 
   const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Producto no encontrado' });
@@ -212,6 +221,18 @@ router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
     if (dupExtra) return res.status(400).json({ error: 'Ese código ya está asignado como código adicional de otro producto' });
   }
 
+  const finalSellableIndividually = sellable_individually !== undefined ? !!sellable_individually : !!existing.sellable_individually;
+  if (finalSellableIndividually) {
+    const finalUnitsPerPackage = units_per_package !== undefined ? units_per_package : existing.units_per_package;
+    const finalIndividualPrice = individual_price !== undefined ? individual_price : existing.individual_price;
+    if (!finalUnitsPerPackage || finalUnitsPerPackage <= 0) {
+      return res.status(400).json({ error: 'Indica cuántas unidades individuales trae cada paquete' });
+    }
+    if (!finalIndividualPrice || finalIndividualPrice <= 0) {
+      return res.status(400).json({ error: 'Indica el precio de la unidad individual' });
+    }
+  }
+
   let categoryName = existing.category_name;
   if (category_id) {
     const cat = db.prepare('SELECT name FROM categories WHERE id = ?').get(category_id);
@@ -219,7 +240,8 @@ router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
   }
 
   db.prepare(
-    `UPDATE products SET name = ?, barcode = ?, category_id = ?, category_name = ?, purchase_price = ?, sale_price = ?, min_stock = ?, supplier = ?, unit_type = ?, updated_at = datetime("now")
+    `UPDATE products SET name = ?, barcode = ?, category_id = ?, category_name = ?, purchase_price = ?, sale_price = ?, min_stock = ?, supplier = ?, unit_type = ?,
+     sellable_individually = ?, units_per_package = ?, individual_price = ?, updated_at = datetime("now")
      WHERE id = ?`
   ).run(
     name || existing.name,
@@ -231,6 +253,9 @@ router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
     min_stock !== undefined ? min_stock : existing.min_stock,
     supplier !== undefined ? supplier : existing.supplier,
     unit_type || existing.unit_type || 'unit',
+    finalSellableIndividually ? 1 : 0,
+    finalSellableIndividually ? (units_per_package !== undefined ? units_per_package : existing.units_per_package) : null,
+    finalSellableIndividually ? (individual_price !== undefined ? individual_price : existing.individual_price) : null,
     req.params.id
   );
 

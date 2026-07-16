@@ -251,8 +251,17 @@ router.get('/profit', authMiddleware, (req, res) => {
     if (dateTo) { salesWhere += ' AND date(s.created_at) <= ?'; expWhere += ' AND date(created_at) <= ?'; params.push(dateTo); }
 
     const revenue = db.prepare(`SELECT COALESCE(SUM(total), 0) as total FROM sales s WHERE ${salesWhere}`).get(...params);
+    // Una venta individual (ej. cigarros sueltos) vende PIEZAS, pero
+    // purchase_price es el costo del PAQUETE completo — hay que prorratear
+    // el costo entre las unidades del paquete, si no el costo de una sola
+    // pieza se calcularía como si fuera el paquete entero.
     const cost = db.prepare(
-      `SELECT COALESCE(SUM(si.quantity * COALESCE(p.purchase_price, 0)), 0) as total
+      `SELECT COALESCE(SUM(
+         si.quantity * CASE
+           WHEN si.is_individual = 1 AND p.units_per_package > 0 THEN COALESCE(p.purchase_price, 0) * 1.0 / p.units_per_package
+           ELSE COALESCE(p.purchase_price, 0)
+         END
+       ), 0) as total
        FROM sale_items si JOIN sales s ON si.sale_id = s.id
        LEFT JOIN products p ON si.product_id = p.id
        WHERE ${salesWhere}`

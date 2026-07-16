@@ -49,11 +49,22 @@ router.post('/', authMiddleware, (req, res) => {
     if (!product) {
       return res.status(404).json({ error: `Producto ID ${item.product_id} no encontrado` });
     }
-    if (product.stock < item.quantity) {
+
+    // Venta individual (ej. cigarros sueltos de una cajetilla): el stock del
+    // producto se lleva en unidades de PAQUETE, así que vender N piezas
+    // sueltas descuenta N/units_per_package paquetes, no N paquetes enteros.
+    item.is_individual = !!(item.is_individual && product.sellable_individually);
+    if (item.is_individual && (!product.units_per_package || !product.individual_price)) {
+      return res.status(400).json({ error: `${product.name} no está configurado para venta individual` });
+    }
+    item.stock_delta = item.is_individual ? (item.quantity / product.units_per_package) : item.quantity;
+
+    if (product.stock < item.stock_delta) {
       return res.status(400).json({ error: `Stock insuficiente para ${product.name}. Disponible: ${product.stock}` });
     }
-    if (isCashier && item.unit_price !== product.sale_price) {
-      item.unit_price = product.sale_price;
+    const expectedPrice = item.is_individual ? product.individual_price : product.sale_price;
+    if (isCashier && item.unit_price !== expectedPrice) {
+      item.unit_price = expectedPrice;
     }
     if (isCashier && item.discount > 0) {
       item.discount = 0;
@@ -112,8 +123,8 @@ router.post('/', authMiddleware, (req, res) => {
   );
 
   const insertItem = db.prepare(
-    `INSERT INTO sale_items (sale_id, product_id, product_name, barcode, quantity, unit_price, discount, subtotal)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO sale_items (sale_id, product_id, product_name, barcode, quantity, unit_price, discount, subtotal, is_individual, stock_delta)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   const updateStock = db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?');
@@ -131,11 +142,12 @@ router.post('/', authMiddleware, (req, res) => {
     const saleId = saleResult.lastInsertRowid;
 
     for (const item of items) {
-      insertItem.run(saleId, item.product_id, item.product_name, item.barcode || null, item.quantity, item.unit_price, item.discount || 0, item.subtotal);
-      updateStock.run(item.quantity, item.product_id);
-      const stockBefore = getStock.get(item.product_id).stock + item.quantity;
-      const stockAfter = stockBefore - item.quantity;
-      insertMovement.run(item.product_id, item.quantity, stockBefore, stockAfter, saleId, 'Venta realizada', req.user.id);
+      insertItem.run(saleId, item.product_id, item.product_name, item.barcode || null, item.quantity, item.unit_price, item.discount || 0, item.subtotal, item.is_individual ? 1 : 0, item.stock_delta);
+      updateStock.run(item.stock_delta, item.product_id);
+      const stockBefore = getStock.get(item.product_id).stock + item.stock_delta;
+      const stockAfter = stockBefore - item.stock_delta;
+      const notes = item.is_individual ? `Venta individual (${item.quantity} pza${item.quantity !== 1 ? 's' : ''})` : 'Venta realizada';
+      insertMovement.run(item.product_id, item.stock_delta, stockBefore, stockAfter, saleId, notes, req.user.id);
     }
 
     if (customer_id) {
@@ -284,13 +296,17 @@ router.post('/:id/cancel', authMiddleware, (req, res) => {
 
     const items = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(req.params.id);
     for (const item of items) {
+      // stock_delta es lo que realmente se descontó al vender (puede ser una
+      // fracción de paquete en venta individual); sale_items viejos de antes
+      // de esta columna no la tienen, ahí sí corresponde revertir "quantity".
+      const revertQty = item.stock_delta != null ? item.stock_delta : item.quantity;
       const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(item.product_id);
       const stockBefore = product ? product.stock : 0;
-      db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(item.quantity, item.product_id);
+      db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(revertQty, item.product_id);
       db.prepare(
         `INSERT INTO inventory_movements (product_id, type, quantity, stock_before, stock_after, reference_type, reference_id, notes, created_by)
          VALUES (?, 'in', ?, ?, ?, 'cancellation', ?, ?, ?)`
-      ).run(item.product_id, item.quantity, stockBefore, stockBefore + item.quantity, req.params.id, 'Cancelación de venta', req.user.id);
+      ).run(item.product_id, revertQty, stockBefore, stockBefore + revertQty, req.params.id, 'Cancelación de venta', req.user.id);
     }
 
     // Si la venta canceló crédito/fiado, revertir el saldo del cliente

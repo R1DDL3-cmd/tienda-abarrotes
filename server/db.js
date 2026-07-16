@@ -591,6 +591,19 @@ const SCHEMA_MIGRATIONS = [
     try { db.exec('ALTER TABLE sales ADD COLUMN client_created_at DATETIME'); } catch (e) {}
     try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_client_id ON sales(client_id) WHERE client_id IS NOT NULL'); } catch (e) {}
   },
+  // v8: venta individual/fraccionada (ej. cigarros sueltos de una cajetilla).
+  // El stock del producto sigue llevándose en unidades de paquete (cajetillas);
+  // vender N piezas individuales descuenta N/units_per_package cajetillas.
+  // sale_items.stock_delta guarda cuánto se descontó realmente de products.stock
+  // para esa línea — necesario para revertir bien la cantidad correcta si la
+  // venta se cancela (no siempre es igual a sale_items.quantity).
+  (db) => {
+    try { db.exec('ALTER TABLE products ADD COLUMN sellable_individually INTEGER DEFAULT 0'); } catch (e) {}
+    try { db.exec('ALTER TABLE products ADD COLUMN units_per_package INTEGER'); } catch (e) {}
+    try { db.exec('ALTER TABLE products ADD COLUMN individual_price REAL'); } catch (e) {}
+    try { db.exec('ALTER TABLE sale_items ADD COLUMN is_individual INTEGER DEFAULT 0'); } catch (e) {}
+    try { db.exec('ALTER TABLE sale_items ADD COLUMN stock_delta REAL'); } catch (e) {}
+  },
 ];
 
 function getSchemaVersion(db) {
