@@ -51,6 +51,7 @@ export default function POS({ user, onLogout }) {
   const [showCashCountModal, setShowCashCountModal] = useState(false)
   const [cashCountAmount, setCashCountAmount] = useState('')
   const [showSecurityModal, setShowSecurityModal] = useState(false)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [securityBarcode, setSecurityBarcode] = useState('')
   const [securityQty, setSecurityQty] = useState(1)
   const [securityPin, setSecurityPin] = useState('')
@@ -597,21 +598,6 @@ export default function POS({ user, onLogout }) {
         </div>
         <div className="pos-header-right">
           <div className="btn-group">
-            {user?.role === 'admin' && (
-              <>
-                <button className="btn btn-sm btn-outline" onClick={() => window.location.hash = '#/inventory'}>Inventario</button>
-                <button className="btn btn-sm btn-outline" onClick={() => window.location.hash = '#/accounting'}>Contabilidad</button>
-                <button className="btn btn-sm btn-outline" onClick={() => window.location.hash = '#/customers'}>Clientes</button>
-              </>
-            )}
-            {user?.role === 'cashier' && (
-              <button className="btn btn-sm btn-outline" onClick={() => window.location.hash = '#/predictions'}>Proyector</button>
-            )}
-            {user?.role === 'cashier' && (
-              <button className="btn btn-sm btn-outline" onClick={() => { setCashierExpenseForm({ description: '', amount: '', category: '', notes: '' }); setShowCashierExpenseModal(true) }}>Gasto</button>
-            )}
-          </div>
-          <div className="btn-group">
             {!currentSession ? (
               <button className="btn btn-sm btn-success" onClick={() => { setStartDayAmount(''); setShowStartDayModal(true) }}>Iniciar Dia</button>
             ) : (
@@ -630,16 +616,34 @@ export default function POS({ user, onLogout }) {
             <button className="btn btn-sm btn-outline" onClick={() => setThemeState(toggleTheme())} title={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}>
               {theme === 'dark' ? '☀️' : '🌙'}
             </button>
-            <button className="btn btn-sm btn-outline" onClick={() => setHistoryModal(true)}>Historial</button>
+            <div className="more-menu-wrapper">
+              <button className="btn btn-sm btn-outline" onClick={() => setShowMoreMenu(v => !v)}>Más ▾</button>
+              {showMoreMenu && (
+                <>
+                  <div className="more-menu-backdrop" onClick={() => setShowMoreMenu(false)} />
+                  <div className="more-menu">
+                    {user?.role === 'admin' && (
+                      <>
+                        <button onClick={() => { window.location.hash = '#/inventory'; setShowMoreMenu(false) }}>Inventario</button>
+                        <button onClick={() => { window.location.hash = '#/accounting'; setShowMoreMenu(false) }}>Contabilidad</button>
+                        <button onClick={() => { window.location.hash = '#/customers'; setShowMoreMenu(false) }}>Clientes</button>
+                      </>
+                    )}
+                    {user?.role === 'cashier' && (
+                      <>
+                        <button onClick={() => { window.location.hash = '#/predictions'; setShowMoreMenu(false) }}>Proyector</button>
+                        <button onClick={() => { setCashierExpenseForm({ description: '', amount: '', category: '', notes: '' }); setShowCashierExpenseModal(true); setShowMoreMenu(false) }}>Gasto</button>
+                      </>
+                    )}
+                    <button onClick={() => { setHistoryModal(true); setShowMoreMenu(false) }}>Historial (F8)</button>
+                    {user?.role === 'admin' && (
+                      <button onClick={() => { window.location.hash = '#/settings'; setShowMoreMenu(false) }}>Configuración</button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
             <button className="btn btn-sm btn-outline" onClick={handleLogout}>Salir</button>
-            {user?.role === 'admin' && (
-            <button className="btn btn-sm btn-outline settings-btn" onClick={() => window.location.hash = '#/settings'} title="Configuracion">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
-            </button>
-            )}
           </div>
         </div>
       </header>

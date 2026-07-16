@@ -225,6 +225,21 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 .pos-header-right .btn-group + .btn-group { padding-left: 0.75rem; margin-left: 0.75rem; border-left: 3px solid rgba(255,255,255,0.6); height: 24px; align-self: center; }
 .settings-btn { display: flex; align-items: center; justify-content: center; padding: 0.3rem !important; min-width: 32px; }
 
+.more-menu-wrapper { position: relative; }
+.more-menu-backdrop { position: fixed; inset: 0; z-index: 999; }
+.more-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 1000;
+  background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border); min-width: 170px; padding: 0.35rem;
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.more-menu button {
+  background: transparent; border: none; text-align: left; padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm); cursor: pointer; font-family: var(--font);
+  font-size: 0.85rem; color: var(--text); min-height: 38px;
+}
+.more-menu button:hover { background: var(--bg-hover); }
+
 .network-bar {
   background: var(--bg-hover); padding: 0.25rem 1.2rem; font-size: 0.75rem; text-align: center;
   border-bottom: 1px solid var(--border); color: var(--text-muted);
