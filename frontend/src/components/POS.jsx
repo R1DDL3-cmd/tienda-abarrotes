@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { sales, products, customers, network, accounting, withdrawals, hardware, settings as settingsApi } from '../api'
 import { getTheme, toggleTheme } from '../theme'
+import { enqueueSale, getQueue, syncQueue, discardFailed, retryFailed } from '../offlineQueue'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -52,6 +53,9 @@ export default function POS({ user, onLogout }) {
   const [cashCountAmount, setCashCountAmount] = useState('')
   const [showSecurityModal, setShowSecurityModal] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [offlineQueue, setOfflineQueue] = useState([])
+  const [showQueueModal, setShowQueueModal] = useState(false)
+  const [offlineSaleQueued, setOfflineSaleQueued] = useState(false)
   const [securityBarcode, setSecurityBarcode] = useState('')
   const [securityQty, setSecurityQty] = useState(1)
   const [securityPin, setSecurityPin] = useState('')
@@ -72,6 +76,36 @@ export default function POS({ user, onLogout }) {
   // pide el catálogo completo (solo busca/escanea puntualmente), así que sin
   // esto no habría nada guardado para cuando falte la conexión.
   useEffect(() => { products.all().catch(() => {}); customers.list().catch(() => {}) }, [])
+
+  // Checkpoint 2 de modo offline: reintenta enviar las ventas en cola al
+  // arrancar y cada vez que vuelve la conexión — no espera a que el cajero
+  // haga algo para intentarlo.
+  const refreshQueueState = useCallback(() => { setOfflineQueue(getQueue()) }, [])
+
+  const trySyncQueue = useCallback(async () => {
+    const before = getQueue().filter(i => i.status === 'pending').length
+    if (before === 0) { refreshQueueState(); return }
+    const synced = await syncQueue(sales.create)
+    refreshQueueState()
+    if (synced.length > 0) {
+      loadTodaySales()
+      loadRegister()
+      setSuccess(`${synced.length} venta(s) pendiente(s) sincronizada(s)`)
+      setTimeout(() => setSuccess(''), 4000)
+    }
+  }, [refreshQueueState])
+
+  useEffect(() => {
+    refreshQueueState()
+    trySyncQueue()
+    window.addEventListener('online', trySyncQueue)
+    // Red de seguridad: navigator.onLine solo detecta la interfaz de red, no
+    // si el servidor específicamente volvió a responder. Si el PC principal
+    // se reinicia sin que el WiFi de la tablet se haya caído en ningún
+    // momento, el evento 'online' nunca dispara — este intervalo cubre ese caso.
+    const interval = setInterval(trySyncQueue, 30000)
+    return () => { window.removeEventListener('online', trySyncQueue); clearInterval(interval) }
+  }, [trySyncQueue, refreshQueueState])
   useEffect(() => { loadTodaySales() }, [])
 
   const loadRegister = useCallback(async () => {
@@ -323,25 +357,47 @@ export default function POS({ user, onLogout }) {
       setError('El total de pagos debe cubrir el monto de la venta')
       return
     }
+    const salePayload = {
+      items: cart.map(i => ({
+        product_id: i.product_id,
+        quantity: i.quantity,
+        unit_price: i.unit_price,
+        discount: i.discount
+      })),
+      payments: payments.map(p => ({ method: p.method, amount: parseFloat(p.amount) || 0 })),
+      discount: totalDiscount,
+      customer_id: selectedCustomer?.id || null,
+      customer_name: selectedCustomer?.name || null
+    }
+
+    const queueOffline = () => {
+      // No se pierde la venta: se guarda en la cola local y se manda sola en
+      // cuanto vuelva la señal (ver offlineQueue.js). El stock/saldo real se
+      // valida en el servidor al sincronizar, nunca aquí.
+      enqueueSale(salePayload)
+      refreshQueueState()
+      setCart([])
+      setTotalDiscount(0)
+      setSelectedCustomer(null)
+      setPaymentModal(false)
+      setOfflineSaleQueued(true)
+      setSaleDone({ sale: { total }, items: cart })
+    }
+
+    // navigator.onLine solo detecta la interfaz de red (WiFi prendido o no),
+    // no si el servidor específicamente responde — así que además de este
+    // atajo rápido, el catch de abajo también encola si el intento real
+    // falla por conexión (ej. el WiFi sigue "conectado" pero el PC principal
+    // se cayó, o el router murió a medio intento).
     if (!navigator.onLine) {
-      setError('Sin conexión: no se puede cobrar en este momento. El carrito no se pierde — intenta de nuevo cuando vuelva la señal.')
+      queueOffline()
       return
     }
 
     try {
-      const res = await sales.create({
-        items: cart.map(i => ({
-          product_id: i.product_id,
-          quantity: i.quantity,
-          unit_price: i.unit_price,
-          discount: i.discount
-        })),
-        payments: payments.map(p => ({ method: p.method, amount: parseFloat(p.amount) || 0 })),
-        discount: totalDiscount,
-        customer_id: selectedCustomer?.id || null,
-        customer_name: selectedCustomer?.name || null
-      })
+      const res = await sales.create(salePayload)
       setSaleDone({ sale: res.sale, items: res.items })
+      setOfflineSaleQueued(false)
       setCart([])
       setTotalDiscount(0)
       setSelectedCustomer(null)
@@ -352,7 +408,11 @@ export default function POS({ user, onLogout }) {
       setTimeout(() => setSuccess(''), 3000)
       hardware.openDrawer().catch(() => {})
     } catch (e) {
-      setError(e.message)
+      if (e.message === 'Failed to fetch') {
+        queueOffline()
+      } else {
+        setError(e.message)
+      }
     }
   }
 
@@ -603,6 +663,15 @@ export default function POS({ user, onLogout }) {
               ${parseFloat((currentSession?.opening_amount ?? registerData.opening_amount) || 0).toFixed(0)} ini | ${parseFloat(registerData.totalExpenses || 0).toFixed(0)} gas | ${parseFloat(registerData.totalSales || 0).toFixed(0)} ven
             </span>
           )}
+          {offlineQueue.length > 0 && (
+            <button
+              className={`btn btn-sm ${offlineQueue.some(i => i.status === 'failed') ? 'btn-danger' : 'btn-warning'}`}
+              onClick={() => setShowQueueModal(true)}
+              title="Ventas guardadas sin conexión"
+            >
+              ⏳ {offlineQueue.length} sin sincronizar
+            </button>
+          )}
         </div>
         <div className="pos-header-right">
           <div className="btn-group">
@@ -688,12 +757,16 @@ export default function POS({ user, onLogout }) {
 
       {saleDone ? (
         <div className="sale-done">
-          <div className="sale-done-icon">✓</div>
-          <h2>Venta Completada</h2>
-          <p>Ticket #{saleDone.sale.id} - Total: {formatMoney(saleDone.sale.total)}</p>
+          <div className="sale-done-icon">{offlineSaleQueued ? '⏳' : '✓'}</div>
+          <h2>{offlineSaleQueued ? 'Venta Guardada (Sin Conexión)' : 'Venta Completada'}</h2>
+          {offlineSaleQueued ? (
+            <p>Total: {formatMoney(saleDone.sale.total)} — se enviará sola en cuanto vuelva la señal. No se imprime ticket todavía porque el folio se asigna al sincronizar.</p>
+          ) : (
+            <p>Ticket #{saleDone.sale.id} - Total: {formatMoney(saleDone.sale.total)}</p>
+          )}
           <div className="sale-done-actions">
-            <button className="btn btn-primary" onClick={handlePrintTicket}>Imprimir Ticket</button>
-            <button className="btn btn-secondary" onClick={() => { setSaleDone(null) }}>
+            {!offlineSaleQueued && <button className="btn btn-primary" onClick={handlePrintTicket}>Imprimir Ticket</button>}
+            <button className="btn btn-secondary" onClick={() => { setSaleDone(null); setOfflineSaleQueued(false) }}>
               Nueva Venta
             </button>
           </div>
@@ -1090,6 +1163,56 @@ export default function POS({ user, onLogout }) {
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => { setCancelModal(null); setCancelReason('') }} tabIndex="0">Volver</button>
               <button className="btn btn-danger" onClick={() => handleCancelSale(cancelModal.id)} tabIndex="0">Cancelar Venta</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showQueueModal && (
+        <div className="modal-overlay" onClick={() => setShowQueueModal(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Ventas Sin Sincronizar</h3>
+              <button className="btn btn-sm btn-outline" onClick={() => setShowQueueModal(false)}>Cerrar</button>
+            </div>
+            <div className="modal-body">
+              <p className="text-muted">
+                Las pendientes se reintentan solas al recuperar conexión. Las que fallaron el servidor las rechazó de verdad
+                (ej. ya no hay stock, o se excedió el límite de crédito) — revísalas y decide si reintentar o descartar.
+              </p>
+              <div className="table-responsive">
+                <table className="table">
+                  <thead>
+                    <tr><th>Hecha</th><th>Total</th><th>Cliente</th><th>Estado</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {offlineQueue.map(item => (
+                      <tr key={item.id}>
+                        <td style={{fontSize:'0.8rem'}}>{new Date(item.createdAt).toLocaleString('es-MX')}</td>
+                        <td>{formatMoney(item.payload.items.reduce((s, i) => s + (i.unit_price * i.quantity - (i.discount || 0)), 0) - (item.payload.discount || 0))}</td>
+                        <td>{item.payload.customer_name || '-'}</td>
+                        <td>
+                          {item.status === 'failed'
+                            ? <span className="badge badge-danger" title={item.error}>Rechazada: {item.error}</span>
+                            : <span className="badge badge-warning">Pendiente de enviar</span>}
+                        </td>
+                        <td className="actions-cell">
+                          {item.status === 'failed' && (
+                            <>
+                              <button className="btn btn-sm btn-outline" onClick={() => { retryFailed(item.id); refreshQueueState(); trySyncQueue() }}>Reintentar</button>
+                              <button className="btn btn-sm btn-danger" onClick={() => { if (confirm('¿Descartar esta venta? No se registrará en el sistema.')) { discardFailed(item.id); refreshQueueState() } }}>Descartar</button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {offlineQueue.length === 0 && <tr><td colSpan="5" className="text-center">Sin ventas pendientes</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowQueueModal(false)}>Cerrar</button>
             </div>
           </div>
         </div>

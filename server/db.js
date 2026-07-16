@@ -581,6 +581,16 @@ const SCHEMA_MIGRATIONS = [
   (db) => {
     db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
   },
+  // v7: modo offline — client_id permite que la tablet reintente sincronizar
+  // una venta sin crearla dos veces si la primera confirmación se perdió en
+  // el camino. client_created_at guarda la hora real del dispositivo cuando
+  // se hizo la venta (created_at sigue siendo la hora del servidor al
+  // sincronizar, para no tener que reabrir cortes de caja ya cerrados).
+  (db) => {
+    try { db.exec('ALTER TABLE sales ADD COLUMN client_id TEXT'); } catch (e) {}
+    try { db.exec('ALTER TABLE sales ADD COLUMN client_created_at DATETIME'); } catch (e) {}
+    try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_client_id ON sales(client_id) WHERE client_id IS NOT NULL'); } catch (e) {}
+  },
 ];
 
 function getSchemaVersion(db) {

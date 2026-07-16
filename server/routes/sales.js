@@ -17,7 +17,18 @@ function attachCustomerBalance(db, sale) {
 
 router.post('/', authMiddleware, (req, res) => {
   const db = getDB();
-  const { items, payments, discount = 0, customer_id, customer_name } = req.body;
+  const { items, payments, discount = 0, customer_id, customer_name, client_id, client_created_at } = req.body;
+
+  // Idempotencia para la cola de ventas offline: si la tablet ya envió esta
+  // venta antes (la confirmación se perdió en el camino y reintentó), no
+  // crearla dos veces — devolver la que ya existe.
+  if (client_id) {
+    const existing = attachCustomerBalance(db, db.prepare('SELECT * FROM sales WHERE client_id = ?').get(client_id));
+    if (existing) {
+      const existingItems = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(existing.id);
+      return res.status(200).json({ sale: existing, items: existingItems, _idempotent: true });
+    }
+  }
 
   if (!items || items.length === 0) {
     return res.status(400).json({ error: 'La venta debe tener al menos un producto' });
@@ -96,8 +107,8 @@ router.post('/', authMiddleware, (req, res) => {
   }
 
   const insertSale = db.prepare(
-    `INSERT INTO sales (total, discount, payment_method, payment_details, customer_id, customer_name, status, created_by, created_by_name)
-     VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, ?)`
+    `INSERT INTO sales (total, discount, payment_method, payment_details, customer_id, customer_name, status, created_by, created_by_name, client_id, client_created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)`
   );
 
   const insertItem = db.prepare(
@@ -116,7 +127,7 @@ router.post('/', authMiddleware, (req, res) => {
   const paymentMethods = payments.map(p => `${p.method}: $${p.amount.toFixed(2)}`).join(', ');
 
   const transaction = db.transaction(() => {
-    const saleResult = insertSale.run(total, discount, paymentMethods, JSON.stringify(payments), customer_id || null, customer_name || null, req.user.id, req.user.name);
+    const saleResult = insertSale.run(total, discount, paymentMethods, JSON.stringify(payments), customer_id || null, customer_name || null, req.user.id, req.user.name, client_id || null, client_created_at || null);
     const saleId = saleResult.lastInsertRowid;
 
     for (const item of items) {
