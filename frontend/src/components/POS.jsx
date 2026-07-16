@@ -60,7 +60,8 @@ export default function POS({ user, onLogout }) {
   const [clock, setClock] = useState(new Date())
 
   useEffect(() => { const id = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(id) }, [])
-  useEffect(() => { barcodeRef.current?.focus() }, [])
+  useEffect(() => { if (error) { const t = setTimeout(() => setError(''), 7000); return () => clearTimeout(t) } }, [error])
+  useEffect(() => { if (success) { const t = setTimeout(() => setSuccess(''), 3000); return () => clearTimeout(t) } }, [success])
   useEffect(() => { network.info().then(setNetworkInfo).catch(() => {}) }, [])
   useEffect(() => { loadTodaySales() }, [])
 

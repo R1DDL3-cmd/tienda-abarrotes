@@ -1,6 +1,25 @@
+const path = require('path');
+const fs = require('fs');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = 'tienda-abarrotes-secret-key-2024';
+function loadSecret() {
+  const configPath = path.join(__dirname, '..', '..', 'data', '.secret');
+  try {
+    if (fs.existsSync(configPath)) {
+      return fs.readFileSync(configPath, 'utf8').trim();
+    }
+  } catch (e) {}
+  const secret = 'tienda-abarrotes-secret-key-2024';
+  try {
+    if (!fs.existsSync(path.dirname(configPath))) {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    }
+    fs.writeFileSync(configPath, secret, 'utf8');
+  } catch (e) {}
+  return secret;
+}
+
+const JWT_SECRET = process.env.JWT_SECRET || loadSecret();
 const JWT_EXPIRES = '12h';
 
 function generateToken(user) {

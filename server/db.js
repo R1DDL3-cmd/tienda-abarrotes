@@ -5,6 +5,41 @@ const initSqlJs = require('sql.js');
 let db = null;
 let currentDBPath = null;
 let SQL = null;
+let _saveTimeout = null;
+let _savePending = false;
+
+function debouncedSave() {
+  if (_savePending) return;
+  _savePending = true;
+  _saveTimeout = setTimeout(() => {
+    try {
+      _savePending = false;
+      if (db && currentDBPath) {
+        const data = db.sqlDb.export();
+        const buffer = Buffer.from(data);
+        fs.writeFileSync(currentDBPath, buffer);
+      }
+    } catch (e) {
+      _savePending = false;
+      console.error('Save error:', e.message);
+    }
+  }, 300);
+}
+
+function flushSave() {
+  if (_saveTimeout) {
+    clearTimeout(_saveTimeout);
+    _saveTimeout = null;
+  }
+  if (_savePending) {
+    _savePending = false;
+    if (db && currentDBPath) {
+      const data = db.sqlDb.export();
+      const buffer = Buffer.from(data);
+      fs.writeFileSync(currentDBPath, buffer);
+    }
+  }
+}
 
 function computeDBPath() {
   if (process.env.ELECTRON_RUN === 'true') {
@@ -18,14 +53,6 @@ function computeDBPath() {
   const dataDir = path.join(__dirname, '..', 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   return path.join(dataDir, 'tienda.db');
-}
-
-function saveDB() {
-  if (db && currentDBPath) {
-    const data = db.sqlDb.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(currentDBPath, buffer);
-  }
 }
 
 class Statement {
@@ -43,7 +70,6 @@ class Statement {
         this.sqlDb.run(this.sql, params);
       }
       const changes = this.sqlDb.getRowsModified();
-      // Get last_insert_rowid BEFORE saveDB to avoid any state reset
       const lastIdStmt = this.sqlDb.prepare("SELECT last_insert_rowid() as id");
       let lastInsertRowid = 0;
       if (lastIdStmt.step()) {
@@ -51,7 +77,7 @@ class Statement {
         lastInsertRowid = row.id || 0;
       }
       lastIdStmt.free();
-      if (!this.db._inTransaction) saveDB();
+      if (!this.db._inTransaction) debouncedSave();
       return { lastInsertRowid, changes };
     } catch (e) {
       throw e;
@@ -109,7 +135,7 @@ class DatabaseWrapper {
   run(sql, params = []) {
     try {
       this.sqlDb.run(sql, params);
-      saveDB();
+      debouncedSave();
     } catch (e) {
       throw e;
     }
@@ -117,13 +143,13 @@ class DatabaseWrapper {
 
   exec(sql) {
     this.sqlDb.exec(sql);
-    saveDB();
+    debouncedSave();
   }
 
   pragma(str) {}
 
   close() {
-    saveDB();
+    flushSave();
     if (this.sqlDb) this.sqlDb.close();
   }
 
@@ -142,7 +168,7 @@ class DatabaseWrapper {
         const result = fn(...args);
         self.sqlDb.run('COMMIT');
         self._inTransaction = false;
-        saveDB();
+        flushSave();
         return result;
       } catch (e) {
         self.sqlDb.run('ROLLBACK');
@@ -173,6 +199,7 @@ async function initDatabase() {
   }
 
   db = new DatabaseWrapper(sqlDb);
+  db.sqlDb.run('PRAGMA foreign_keys = ON');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -489,7 +516,7 @@ async function initDatabase() {
     db.exec('DROP TABLE users_old');
   } catch (e) {}
 
-  saveDB();
+  flushSave();
   return db;
 }
 
@@ -512,7 +539,8 @@ function reloadDB() {
   const sqlDb = new SQL.Database(fileBuffer);
   
   db = new DatabaseWrapper(sqlDb);
-  
+  db.sqlDb.run('PRAGMA foreign_keys = ON');
+
   try { db.exec('ALTER TABLE cash_movements ADD COLUMN session_id INTEGER'); } catch (e) {}
   
   try {
@@ -543,8 +571,8 @@ function reloadDB() {
   
   try { db.exec('ALTER TABLE products ADD COLUMN unit_type TEXT DEFAULT \'unit\' CHECK(unit_type IN (\'unit\', \'kg\', \'l\'))'); } catch (e) {}
   try { db.exec('ALTER TABLE products DROP COLUMN expiry_date'); } catch (e) {}
-  
-  saveDB();
+
+  flushSave();
 }
 
 module.exports = { initDatabase, getDB, getDBPath: () => currentDBPath, reloadDB };

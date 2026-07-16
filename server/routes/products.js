@@ -219,6 +219,11 @@ router.delete('/batches/:batchId', authMiddleware, inventoryAdminMiddleware, (re
   const db = getDB();
   const batch = db.prepare('SELECT * FROM product_batches WHERE id = ?').get(req.params.batchId);
   if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
+  const product = db.prepare('SELECT stock, name FROM products WHERE id = ?').get(batch.product_id);
+  if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+  if (product.stock < batch.quantity) {
+    return res.status(400).json({ error: `Stock insuficiente para eliminar lote: ${product.name} tiene ${product.stock}, el lote tiene ${batch.quantity}` });
+  }
   db.prepare('DELETE FROM product_batches WHERE id = ?').run(req.params.batchId);
   db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').run(batch.quantity, batch.product_id);
   res.json({ success: true });

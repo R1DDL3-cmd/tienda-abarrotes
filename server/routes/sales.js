@@ -188,9 +188,17 @@ router.get('/export', authMiddleware, (req, res) => {
   if (dateFrom) { where += ' AND date(s.created_at) >= ?'; params.push(dateFrom); }
   if (dateTo) { where += ' AND date(s.created_at) <= ?'; params.push(dateTo); }
 
+  const page = parseInt(req.query.page) || 1;
+  const limit = Math.min(parseInt(req.query.limit) || 500, 5000);
+  const offset = (page - 1) * limit;
+
+  const countResult = db.prepare(
+    `SELECT COUNT(*) as total FROM (SELECT DISTINCT s.id FROM sales s ${where})`
+  ).get(...params);
+
   const sales = db.prepare(
-    `SELECT s.*, u.name as created_by_name FROM sales s LEFT JOIN users u ON s.created_by = u.id ${where} ORDER BY s.created_at DESC`
-  ).all(...params);
+    `SELECT s.*, u.name as created_by_name FROM sales s LEFT JOIN users u ON s.created_by = u.id ${where} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`
+  ).all(...params, limit, offset);
 
   const result = [];
   for (const sale of sales) {
@@ -213,7 +221,7 @@ router.get('/export', authMiddleware, (req, res) => {
     }
   }
 
-  res.json({ sales: result });
+  res.json({ sales: result, total: countResult.total, page, limit });
 });
 
 router.get('/:id', authMiddleware, (req, res) => {

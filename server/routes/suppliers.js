@@ -229,12 +229,15 @@ router.delete('/purchases/:id', (req, res) => {
         const items = db.prepare('SELECT * FROM purchase_items WHERE purchase_id = ?').all(req.params.id);
         items.forEach(item => {
           if (item.product_id) {
-            const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(item.product_id);
+            const product = db.prepare('SELECT stock, name FROM products WHERE id = ?').get(item.product_id);
             if (product) {
+              if (product.stock < item.quantity) {
+                throw new Error(`Stock insuficiente para cancelar: ${product.name} tiene ${product.stock}, necesita ${item.quantity}`);
+              }
               const stockBefore = product.stock;
               const stockAfter = stockBefore - item.quantity;
-              db.run('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [Math.max(0, stockAfter), item.product_id]);
-              recordInventoryMovement(item.product_id, 'out', item.quantity, stockBefore, Math.max(0, stockAfter), 'purchase_cancel', purchase.id, `Cancelacion de compra #${purchase.id}`, req.user.id);
+              db.run('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [stockAfter, item.product_id]);
+              recordInventoryMovement(item.product_id, 'out', item.quantity, stockBefore, stockAfter, 'purchase_cancel', purchase.id, `Cancelacion de compra #${purchase.id}`, req.user.id);
             }
           }
         });

@@ -73,6 +73,11 @@ router.post('/restore', authMiddleware, adminMiddleware, (req, res) => {
   }
 
   try {
+    const fileBuffer = fs.readFileSync(backupPath);
+    if (fileBuffer.length < 100 || fileBuffer.readUInt8(0) !== 0x53 || fileBuffer.readUInt8(1) !== 0x51 || fileBuffer.readUInt8(2) !== 0x4C || fileBuffer.readUInt8(3) !== 0x69) {
+      return res.status(400).json({ error: 'El archivo no es una base de datos SQLite válida' });
+    }
+
     const dbPath = getDBPath();
     const backupBeforePath = dbPath + '.pre_restore_backup';
     fs.copyFileSync(dbPath, backupBeforePath);

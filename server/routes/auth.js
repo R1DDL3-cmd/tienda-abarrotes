@@ -5,7 +5,30 @@ const { generateToken, authMiddleware, adminMiddleware } = require('../middlewar
 
 const router = express.Router();
 
+const loginAttempts = new Map();
+
+function rateLimit(ip) {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  if (!loginAttempts.has(ip)) {
+    loginAttempts.set(ip, { count: 1, start: now });
+    return true;
+  }
+  const entry = loginAttempts.get(ip);
+  if (now - entry.start > windowMs) {
+    loginAttempts.set(ip, { count: 1, start: now });
+    return true;
+  }
+  entry.count++;
+  if (entry.count > 10) return false;
+  return true;
+}
+
 router.post('/login', (req, res) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  if (!rateLimit(ip)) {
+    return res.status(429).json({ error: 'Demasiados intentos. Intente de nuevo en 15 minutos.' });
+  }
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
