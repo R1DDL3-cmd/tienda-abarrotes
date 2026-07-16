@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { auth, backup, settings as settingsApi } from '../api'
 import { formatDate, formatDateTime } from '../dateUtils'
 import { getTheme, setTheme } from '../theme'
+import { getShortcuts, setShortcutKey, resetShortcuts, eventToKeyString, DEFAULT_SHORTCUTS } from '../shortcuts'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -25,10 +26,34 @@ export default function Settings({ user }) {
   const importFileRef = useRef(null)
   const [storeForm, setStoreForm] = useState({ store_name: '', store_address: '', store_phone: '', ticket_footer: '' })
   const [theme, setThemeState] = useState(getTheme())
+  const [shortcuts, setShortcutsState] = useState(getShortcuts())
+  const [capturingShortcut, setCapturingShortcut] = useState(null)
 
   const handleThemeChange = (value) => {
     setTheme(value)
     setThemeState(value)
+  }
+
+  // Captura la siguiente tecla presionada (F1-F12, o Ctrl+letra) para
+  // remapear un atajo. Se ignoran otras teclas para no guardar algo como
+  // "a" que chocaría con escritura normal en cualquier input.
+  useEffect(() => {
+    if (!capturingShortcut) return
+    const onKeyDown = (e) => {
+      e.preventDefault()
+      const key = eventToKeyString(e)
+      if (!key) return
+      setShortcutKey(capturingShortcut, key)
+      setShortcutsState(getShortcuts())
+      setCapturingShortcut(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [capturingShortcut])
+
+  const handleResetShortcuts = () => {
+    resetShortcuts()
+    setShortcutsState(getShortcuts())
   }
 
   const loadUsers = async () => {
@@ -176,6 +201,7 @@ export default function Settings({ user }) {
   const tabs = [
     { id: 'store', label: 'Tienda' },
     { id: 'appearance', label: 'Apariencia' },
+    { id: 'shortcuts', label: 'Atajos' },
     { id: 'users', label: 'Usuarios' },
     { id: 'password', label: 'Contraseña' },
     { id: 'security', label: 'Seguridad' },
@@ -248,6 +274,34 @@ export default function Settings({ user }) {
             >
               🌙 Oscuro
             </button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'shortcuts' && (
+        <div className="card" style={{maxWidth:'550px', padding:'1.5rem'}}>
+          <h3 style={{marginTop:0}}>Atajos de Teclado</h3>
+          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
+            Los de navegación funcionan en cualquier pantalla. Los del punto de venta solo aplican estando ahí. Haz clic en "Cambiar" y presiona la tecla que quieras usar (F1-F12, o Ctrl + una letra).
+          </p>
+          <table className="table">
+            <thead><tr><th>Acción</th><th>Tecla</th><th></th></tr></thead>
+            <tbody>
+              {Object.keys(DEFAULT_SHORTCUTS).map(id => (
+                <tr key={id}>
+                  <td>{shortcuts[id].label}</td>
+                  <td><strong>{capturingShortcut === id ? 'Presiona una tecla...' : shortcuts[id].key}</strong></td>
+                  <td>
+                    <button className="btn btn-sm btn-outline" onClick={() => setCapturingShortcut(id)} disabled={capturingShortcut === id}>
+                      Cambiar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="modal-actions" style={{justifyContent:'flex-start', paddingLeft:0}}>
+            <button className="btn btn-secondary btn-sm" onClick={handleResetShortcuts}>Restablecer todos</button>
           </div>
         </div>
       )}

@@ -14,13 +14,14 @@ export default function AdminLayout({ user, onLogout, children }) {
     return () => clearInterval(id)
   }, [])
 
-  const navItems = [
-    { path: '/pos', label: 'POS' },
-    { path: '/inventory', label: 'Inventario' },
-    { path: '/purchases', label: 'Compras' },
-    { path: '/accounting', label: 'Contabilidad' },
-    { path: '/customers', label: 'Clientes' },
+  const allNavItems = [
+    { path: '/pos', label: 'POS', roles: ['admin', 'cashier', 'inventory'] },
+    { path: '/inventory', label: 'Inventario', roles: ['admin', 'inventory'] },
+    { path: '/purchases', label: 'Compras', roles: ['admin', 'cashier', 'inventory'] },
+    { path: '/accounting', label: 'Contabilidad', roles: ['admin'] },
+    { path: '/customers', label: 'Clientes', roles: ['admin'] },
   ]
+  const navItems = allNavItems.filter(item => item.roles.includes(user?.role))
 
   return (
     <div className="admin-layout">

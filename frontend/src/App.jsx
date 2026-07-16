@@ -12,6 +12,7 @@ import AdminLayout from './components/AdminLayout'
 import ProtectedRoute from './components/ProtectedRoute'
 import PredictionsPage from './components/PredictionsPage'
 import Purchases from './components/Purchases'
+import { getShortcuts, matchesShortcut } from './shortcuts'
 import './styles/app.css'
 
 function formatMoney(n) {
@@ -69,6 +70,29 @@ export default function App() {
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
+  }, [])
+
+  // Atajos de navegación: funcionan en CUALQUIER pantalla (antes vivían
+  // solo dentro de POS.jsx, así que por ejemplo F5 no hacía nada estando en
+  // Contabilidad). Las acciones específicas del POS (buscar, cobrar,
+  // cliente/fiado, historial) se manejan aparte, dentro de POS.jsx, porque
+  // solo tienen sentido ahí.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const tag = e.target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      const shortcuts = getShortcuts()
+      for (const id of Object.keys(shortcuts)) {
+        if (!id.startsWith('nav_')) continue
+        if (matchesShortcut(e, shortcuts[id])) {
+          e.preventDefault()
+          window.location.hash = shortcuts[id].hash
+          return
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
   useEffect(() => {
@@ -161,7 +185,7 @@ export default function App() {
         <Route path="/accounting" element={<ProtectedRoute user={user} allowedRoles={['admin']}><AdminLayout user={user} onLogout={handleLogout}><Accounting user={user} onLogout={handleLogout} /></AdminLayout></ProtectedRoute>} />
         <Route path="/predictions" element={<ProtectedRoute user={user} allowedRoles={['admin', 'cashier']}><PredictionsPage user={user} onLogout={doLogout} /></ProtectedRoute>} />
         <Route path="/customers" element={<ProtectedRoute user={user} allowedRoles={['admin']}><AdminLayout user={user} onLogout={handleLogout}><Customers user={user} onLogout={handleLogout} /></AdminLayout></ProtectedRoute>} />
-        <Route path="/purchases" element={<ProtectedRoute user={user} allowedRoles={['admin']}><AdminLayout user={user} onLogout={handleLogout}><Purchases user={user} /></AdminLayout></ProtectedRoute>} />
+        <Route path="/purchases" element={<ProtectedRoute user={user} allowedRoles={['admin', 'cashier']}><AdminLayout user={user} onLogout={handleLogout}><Purchases user={user} /></AdminLayout></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute user={user} allowedRoles={['admin']}><AdminLayout user={user} onLogout={handleLogout}><Settings user={user} /></AdminLayout></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

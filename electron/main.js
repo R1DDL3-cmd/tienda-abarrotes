@@ -46,6 +46,25 @@ function getLocalIP() {
   return '127.0.0.1';
 }
 
+// Ctrl+/Ctrl- para acercar/alejar y Ctrl+0 para restablecer. No se depende
+// del menú nativo de Electron (roles zoomIn/zoomOut) porque esta app no
+// muestra menú — antes esos atajos simplemente no hacían nada.
+function registerZoomShortcuts(win) {
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta)) return;
+    if (input.key === '=' || input.key === '+') {
+      win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+      event.preventDefault();
+    } else if (input.key === '-') {
+      win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
+      event.preventDefault();
+    } else if (input.key === '0') {
+      win.webContents.setZoomLevel(0);
+      event.preventDefault();
+    }
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1024,
@@ -66,6 +85,7 @@ function createWindow() {
   const port = process.env.ACTUAL_PORT || PORT;
   const url = `http://localhost:${port}`;
 
+  registerZoomShortcuts(mainWindow);
   mainWindow.loadURL(url);
 
   mainWindow.once('ready-to-show', () => {
@@ -140,6 +160,7 @@ ipcMain.on('restart-app', () => {
 });
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
   try {
     await startServer();
   } catch (e) {

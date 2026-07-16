@@ -3,6 +3,7 @@ import { sales, products, customers, network, accounting, withdrawals, hardware,
 import { getTheme, toggleTheme } from '../theme'
 import { enqueueSale, getQueue, syncQueue, discardFailed, retryFailed } from '../offlineQueue'
 import { formatDateTime, formatDate, formatTime, formatLiveClock } from '../dateUtils'
+import { getShortcuts, matchesShortcut } from '../shortcuts'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -201,14 +202,15 @@ export default function POS({ user, onLogout }) {
   // escaneo normal (los lectores de código de barras no envían teclas F).
   useEffect(() => {
     const noModal = !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal
+    const shortcuts = getShortcuts()
     const onKeyDown = (e) => {
       const tag = e.target.tagName
       const isTypingElsewhere = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && e.target !== barcodeRef.current
       if (isTypingElsewhere) return
-      if (e.key === 'F2' && noModal) { e.preventDefault(); setShowSearch(true) }
-      else if (e.key === 'F4' && noModal) { e.preventDefault(); openPayment() }
-      else if (e.key === 'F6' && noModal) { e.preventDefault(); setCustomerModal(true) }
-      else if (e.key === 'F8' && noModal) { e.preventDefault(); setHistoryModal(true) }
+      if (matchesShortcut(e, shortcuts.pos_search) && noModal) { e.preventDefault(); setShowSearch(true) }
+      else if (matchesShortcut(e, shortcuts.pos_charge) && noModal) { e.preventDefault(); openPayment() }
+      else if (matchesShortcut(e, shortcuts.pos_customer) && noModal) { e.preventDefault(); setCustomerModal(true) }
+      else if (matchesShortcut(e, shortcuts.pos_history) && noModal) { e.preventDefault(); setHistoryModal(true) }
       else if (e.key === 'Escape' && showSearch) { setShowSearch(false); setSearchQuery('') }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -703,17 +705,19 @@ export default function POS({ user, onLogout }) {
                     {user?.role === 'admin' && (
                       <>
                         <button onClick={() => { window.location.hash = '#/inventory'; setShowMoreMenu(false) }}>Inventario</button>
+                        <button onClick={() => { window.location.hash = '#/purchases'; setShowMoreMenu(false) }}>Compras</button>
                         <button onClick={() => { window.location.hash = '#/accounting'; setShowMoreMenu(false) }}>Contabilidad</button>
                         <button onClick={() => { window.location.hash = '#/customers'; setShowMoreMenu(false) }}>Clientes</button>
                       </>
                     )}
                     {user?.role === 'cashier' && (
                       <>
-                        <button onClick={() => { window.location.hash = '#/predictions'; setShowMoreMenu(false) }}>Proyector</button>
+                        <button onClick={() => { window.location.hash = '#/purchases'; setShowMoreMenu(false) }}>Compras</button>
+                        <button onClick={() => { window.location.hash = '#/predictions'; setShowMoreMenu(false) }}>Proyector de Compra</button>
                         <button onClick={() => { setCashierExpenseForm({ description: '', amount: '', category: '', notes: '' }); setShowCashierExpenseModal(true); setShowMoreMenu(false) }}>Gasto</button>
                       </>
                     )}
-                    <button onClick={() => { setHistoryModal(true); setShowMoreMenu(false) }}>Historial (F8)</button>
+                    <button onClick={() => { setHistoryModal(true); setShowMoreMenu(false) }}>Historial ({getShortcuts().pos_history.key})</button>
                     {user?.role === 'admin' && (
                       <button onClick={() => { window.location.hash = '#/settings'; setShowMoreMenu(false) }}>Configuración</button>
                     )}
@@ -752,7 +756,7 @@ export default function POS({ user, onLogout }) {
           </button>
         </div>
         <div className="shortcuts-hint" style={{fontSize:'0.75rem', color:'var(--text-muted)', marginTop:'0.25rem'}}>
-          F2 Buscar producto · F4 Cobrar · F6 Cliente/Fiado · F8 Historial
+          {(() => { const s = getShortcuts(); return `${s.pos_search.key} Buscar producto · ${s.pos_charge.key} Cobrar · ${s.pos_customer.key} Cliente/Fiado · ${s.pos_history.key} Historial` })()}
         </div>
       </div>
 

@@ -80,7 +80,7 @@ export default function PredictionsPage({ user, onLogout }) {
       <main className="admin-content">
         <div className="accounting-page">
           <div className="page-header">
-            <h2>Proyector de Ventas</h2>
+            <h2>Proyector de Compra</h2>
             <div className="header-actions">
               <button className="btn btn-sm btn-primary" onClick={() => setShowEventForm(!showEventForm)}>
                 {showEventForm ? 'Cerrar' : 'Registrar Evento Local'}

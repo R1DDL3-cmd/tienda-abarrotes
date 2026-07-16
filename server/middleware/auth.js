@@ -74,4 +74,14 @@ function inventoryAdminMiddleware(req, res, next) {
   }
 }
 
-module.exports = { generateToken, verifyToken, authMiddleware, adminMiddleware, inventoryAdminMiddleware, JWT_SECRET };
+// Compras a proveedores: el dueño pidió explícitamente que los cajeros
+// también puedan registrarlas, no solo el admin.
+function purchasesMiddleware(req, res, next) {
+  if (req.user && (req.user.role === 'admin' || req.user.role === 'cashier' || req.user.role === 'inventory')) {
+    next();
+  } else {
+    res.status(403).json({ error: 'Acceso denegado' });
+  }
+}
+
+module.exports = { generateToken, verifyToken, authMiddleware, adminMiddleware, inventoryAdminMiddleware, purchasesMiddleware, JWT_SECRET };

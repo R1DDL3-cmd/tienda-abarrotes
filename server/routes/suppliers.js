@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { getDB } = require('../db');
-const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { authMiddleware, purchasesMiddleware } = require('../middleware/auth');
 const { predictAll } = require('../services/predictions');
 
 router.use(authMiddleware);
-router.use(adminMiddleware);
+router.use(purchasesMiddleware);
 
 function recordInventoryMovement(productId, type, quantity, stockBefore, stockAfter, referenceType, referenceId, notes, userId) {
   const db = getDB();
