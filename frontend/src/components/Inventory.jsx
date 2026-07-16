@@ -23,6 +23,9 @@ export default function Inventory({ user, onLogout }) {
   const [batchProduct, setBatchProduct] = useState(null)
   const [batches, setBatches] = useState([])
   const [batchForm, setBatchForm] = useState({ batch_code: '', quantity: '', expiry_date: '' })
+  const [barcodeProduct, setBarcodeProduct] = useState(null)
+  const [productBarcodes, setProductBarcodes] = useState([])
+  const [newBarcode, setNewBarcode] = useState('')
   const [showWasteModal, setShowWasteModal] = useState(false)
   const [wasteForm, setWasteForm] = useState({ product_id: '', product_name: '', quantity: '', reason: '', waste_type: 'waste', notes: '' })
   const [showWasteList, setShowWasteList] = useState(false)
@@ -185,6 +188,39 @@ export default function Inventory({ user, onLogout }) {
     } catch (e) { setError(e.message) }
   }
 
+  const openBarcodes = async (p) => {
+    setBarcodeProduct(p)
+    setNewBarcode('')
+    try {
+      const res = await products.barcodes(p.id)
+      setProductBarcodes(res.barcodes)
+    } catch (e) { setError(e.message) }
+  }
+
+  const handleAddBarcode = async () => {
+    const code = newBarcode.trim()
+    if (!code) { setError('Ingresa un código'); return }
+    try {
+      await products.addBarcode(barcodeProduct.id, code)
+      setNewBarcode('')
+      const res = await products.barcodes(barcodeProduct.id)
+      setProductBarcodes(res.barcodes)
+      setSuccess('Código agregado')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
+  }
+
+  const handleDeleteBarcode = async (barcodeId) => {
+    if (!confirm('Eliminar este código?')) return
+    try {
+      await products.deleteBarcode(barcodeId)
+      const res = await products.barcodes(barcodeProduct.id)
+      setProductBarcodes(res.barcodes)
+      setSuccess('Código eliminado')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
+  }
+
   const openWasteModal = (product) => {
     setWasteForm({ product_id: product?.id?.toString() || '', product_name: product?.name || '', quantity: '', reason: '', waste_type: 'waste', notes: '' })
     if (!product) {
@@ -286,6 +322,7 @@ export default function Inventory({ user, onLogout }) {
                     <td className="actions-cell">
                       <button className="btn btn-sm btn-outline" onClick={() => openKardex(p)}>Kardex</button>
                       <button className="btn btn-sm btn-outline" onClick={() => openBatches(p)}>Lotes</button>
+                      <button className="btn btn-sm btn-outline" onClick={() => openBarcodes(p)}>Códigos</button>
                       <button className="btn btn-sm btn-outline" onClick={() => openWasteModal(p)}>Merma</button>
                       <button className="btn btn-sm btn-outline" onClick={() => openEdit(p)}>Editar</button>
                       <button className="btn btn-sm btn-danger" onClick={() => handleDelete(p.id)}>X</button>
@@ -426,6 +463,39 @@ export default function Inventory({ user, onLogout }) {
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setBatchProduct(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {barcodeProduct && (
+        <div className="modal-overlay" onClick={() => setBarcodeProduct(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>Códigos de Barras: {barcodeProduct.name}</h3>
+            <p className="text-muted">Código principal: <strong>{barcodeProduct.barcode || '-'}</strong>. Agrega aquí códigos adicionales (otras presentaciones, báscula, etc.) que deban reconocer el mismo producto al escanear.</p>
+            <div className="form-inline">
+              <input type="text" className="input" placeholder="Nuevo código adicional" value={newBarcode} onChange={e => setNewBarcode(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleAddBarcode() }} autoFocus />
+              <button className="btn btn-primary" onClick={handleAddBarcode}>Agregar</button>
+            </div>
+            <div className="table-responsive" style={{marginTop:'0.5rem'}}>
+              <table className="table">
+                <thead>
+                  <tr><th>Código</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {productBarcodes.map(b => (
+                    <tr key={b.id}>
+                      <td>{b.barcode}</td>
+                      <td><button className="btn btn-sm btn-danger" onClick={() => handleDeleteBarcode(b.id)}>X</button></td>
+                    </tr>
+                  ))}
+                  {productBarcodes.length === 0 && <tr><td colSpan="2" className="text-center">Sin códigos adicionales</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            {error && <div className="alert alert-error" style={{marginTop:'0.5rem'}}>{error}</div>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => { setBarcodeProduct(null); setError('') }}>Cerrar</button>
             </div>
           </div>
         </div>

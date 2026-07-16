@@ -59,14 +59,58 @@ router.get('/all', authMiddleware, (req, res) => {
 
 router.get('/barcode/:barcode', authMiddleware, (req, res) => {
   const db = getDB();
-  const product = db.prepare(
-    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name 
-     FROM products p 
-     LEFT JOIN categories c ON p.category_id = c.id 
+  let product = db.prepare(
+    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name
+     FROM products p
+     LEFT JOIN categories c ON p.category_id = c.id
      WHERE p.barcode = ? AND p.active = 1`
   ).get(req.params.barcode);
+  if (!product) {
+    // No coincide con el código principal — probar códigos adicionales
+    // (mismo producto con varias presentaciones/etiquetas de báscula, etc.)
+    product = db.prepare(
+      `SELECT p.*, COALESCE(c.name, p.category_name) as category_name
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       JOIN product_barcodes pb ON pb.product_id = p.id
+       WHERE pb.barcode = ? AND p.active = 1`
+    ).get(req.params.barcode);
+  }
   if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
   res.json(product);
+});
+
+router.get('/:id/barcodes', authMiddleware, (req, res) => {
+  const db = getDB();
+  const barcodes = db.prepare('SELECT * FROM product_barcodes WHERE product_id = ? ORDER BY created_at ASC').all(req.params.id);
+  res.json({ barcodes });
+});
+
+router.post('/:id/barcodes', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  const { barcode } = req.body;
+  const trimmed = (barcode || '').trim();
+  if (!trimmed) return res.status(400).json({ error: 'Código de barras requerido' });
+
+  const product = db.prepare('SELECT id FROM products WHERE id = ?').get(req.params.id);
+  if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+
+  const collidesWithPrimary = db.prepare('SELECT id FROM products WHERE barcode = ?').get(trimmed);
+  if (collidesWithPrimary) return res.status(400).json({ error: 'Ese código ya está en uso como código principal de otro producto' });
+  const collidesWithExtra = db.prepare('SELECT id FROM product_barcodes WHERE barcode = ?').get(trimmed);
+  if (collidesWithExtra) return res.status(400).json({ error: 'Ese código ya está asignado a otro producto' });
+
+  const result = db.prepare('INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)').run(req.params.id, trimmed);
+  const created = db.prepare('SELECT * FROM product_barcodes WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(created);
+});
+
+router.delete('/barcodes/:barcodeId', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  const existing = db.prepare('SELECT id FROM product_barcodes WHERE id = ?').get(req.params.barcodeId);
+  if (!existing) return res.status(404).json({ error: 'Código no encontrado' });
+  db.prepare('DELETE FROM product_barcodes WHERE id = ?').run(req.params.barcodeId);
+  res.json({ success: true });
 });
 
 router.get('/low-stock', authMiddleware, (req, res) => {
@@ -111,6 +155,10 @@ router.post('/', authMiddleware, inventoryAdminMiddleware, (req, res) => {
     const existingBarcode = barcode ? db.prepare('SELECT id FROM products WHERE barcode = ?').get(barcode) : null;
     if (existingBarcode) {
       return res.status(400).json({ error: 'Ya existe un producto con ese código de barras' });
+    }
+    const existingExtraBarcode = barcode ? db.prepare('SELECT id FROM product_barcodes WHERE barcode = ?').get(barcode) : null;
+    if (existingExtraBarcode) {
+      return res.status(400).json({ error: 'Ese código ya está asignado como código adicional de otro producto' });
     }
 
     let finalBarcode = barcode;
@@ -160,6 +208,8 @@ router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
   if (barcode && barcode !== existing.barcode) {
     const dup = db.prepare('SELECT id FROM products WHERE barcode = ? AND id != ?').get(barcode, req.params.id);
     if (dup) return res.status(400).json({ error: 'Ya existe otro producto con ese código de barras' });
+    const dupExtra = db.prepare('SELECT id FROM product_barcodes WHERE barcode = ?').get(barcode);
+    if (dupExtra) return res.status(400).json({ error: 'Ese código ya está asignado como código adicional de otro producto' });
   }
 
   let categoryName = existing.category_name;

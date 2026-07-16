@@ -561,6 +561,22 @@ const SCHEMA_MIGRATIONS = [
     try { db.exec('ALTER TABLE purchase_items ADD COLUMN received_quantity REAL'); } catch (e) {}
     try { db.exec('ALTER TABLE purchase_items ADD COLUMN received_unit_price REAL'); } catch (e) {}
   },
+  // v5: códigos de barras adicionales por producto. products.barcode sigue
+  // siendo el código principal; esta tabla es solo para códigos extra
+  // (presentaciones distintas del mismo artículo, códigos de báscula, etc.)
+  // que deben resolver al mismo product_id.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS product_barcodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        barcode TEXT UNIQUE NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_product_barcodes_barcode ON product_barcodes(barcode);
+      CREATE INDEX IF NOT EXISTS idx_product_barcodes_product ON product_barcodes(product_id);
+    `);
+  },
 ];
 
 function getSchemaVersion(db) {

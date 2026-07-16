@@ -64,6 +64,9 @@ export const products = {
   batches: (productId) => request(`/products/batches/${productId}`),
   addBatch: (productId, data) => request(`/products/batches/${productId}`, { method: 'POST', body: JSON.stringify(data) }),
   deleteBatch: (batchId) => request(`/products/batches/${batchId}`, { method: 'DELETE' }),
+  barcodes: (productId) => request(`/products/${productId}/barcodes`),
+  addBarcode: (productId, barcode) => request(`/products/${productId}/barcodes`, { method: 'POST', body: JSON.stringify({ barcode }) }),
+  deleteBarcode: (barcodeId) => request(`/products/barcodes/${barcodeId}`, { method: 'DELETE' }),
 };
 
 export const sales = {
