@@ -152,6 +152,27 @@ export default function POS({ user, onLogout }) {
   const subtotal = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity) - (item.discount || 0), 0)
   const total = subtotal - totalDiscount
 
+  // Atajos de teclado para las acciones más frecuentes del día a día:
+  // buscar producto, cobrar, seleccionar cliente (fiado) e historial.
+  // Se ignoran mientras el usuario escribe en cualquier input que no sea el
+  // de código de barras, para no interferir con formularios ni con el
+  // escaneo normal (los lectores de código de barras no envían teclas F).
+  useEffect(() => {
+    const noModal = !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal
+    const onKeyDown = (e) => {
+      const tag = e.target.tagName
+      const isTypingElsewhere = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && e.target !== barcodeRef.current
+      if (isTypingElsewhere) return
+      if (e.key === 'F2' && noModal) { e.preventDefault(); setShowSearch(true) }
+      else if (e.key === 'F4' && noModal) { e.preventDefault(); openPayment() }
+      else if (e.key === 'F6' && noModal) { e.preventDefault(); setCustomerModal(true) }
+      else if (e.key === 'F8' && noModal) { e.preventDefault(); setHistoryModal(true) }
+      else if (e.key === 'Escape' && showSearch) { setShowSearch(false); setSearchQuery('') }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showStartDayModal, paymentModal, customerModal, historyModal, showEndDayModal, showWithdrawalModal, showWithdrawalsList, showLogoutConfirm, showCashCountModal, cancelModal, newCustomerModal, showSecurityModal, showSearch, cart, total])
+
   const handleBarcode = useCallback(async (value) => {
     if (!value) return
     let qty = 1
@@ -642,6 +663,9 @@ export default function POS({ user, onLogout }) {
           <button className="btn btn-secondary" onClick={() => { setShowSearch(!showSearch); setSearchQuery('') }}>
             Buscar
           </button>
+        </div>
+        <div className="shortcuts-hint" style={{fontSize:'0.75rem', color:'var(--text-muted)', marginTop:'0.25rem'}}>
+          F2 Buscar producto · F4 Cobrar · F6 Cliente/Fiado · F8 Historial
         </div>
       </div>
 
