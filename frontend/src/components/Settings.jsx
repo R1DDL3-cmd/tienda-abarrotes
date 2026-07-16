@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { auth, backup, settings as settingsApi } from '../api'
+import { formatDate, formatDateTime } from '../dateUtils'
 import { getTheme, setTheme } from '../theme'
 
 function formatMoney(n) {
@@ -274,7 +275,7 @@ export default function Settings({ user }) {
                     <td><strong>{u.username}</strong></td>
                     <td>{u.name}</td>
                     <td>{u.role === 'admin' ? 'Administrador' : u.role === 'inventory' ? 'Inventario' : 'Cajero'}</td>
-                    <td style={{fontSize:'0.8rem'}}>{new Date(u.created_at).toLocaleDateString('es-MX')}</td>
+                    <td style={{fontSize:'0.8rem'}}>{formatDate(u.created_at)}</td>
                     <td className="actions-cell">
                       {user?.role === 'admin' && <>
                       <button className="btn btn-sm btn-outline" onClick={() => openEditUser(u)}>Editar</button>
@@ -355,7 +356,7 @@ export default function Settings({ user }) {
                 {backupList.map(b => (
                   <tr key={b.name}>
                     <td style={{fontSize:'0.8rem'}}>{b.name}</td>
-                    <td>{new Date(b.date).toLocaleString('es-MX')}</td>
+                    <td>{formatDateTime(b.date)}</td>
                     <td>{(b.size / 1024).toFixed(1)} KB</td>
                     <td><button className="btn btn-sm btn-warning" onClick={() => handleRestore(b.name)}>Restaurar</button></td>
                   </tr>

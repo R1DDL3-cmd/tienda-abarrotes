@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { products, accounting } from '../api'
+import { formatDateTime, formatDate, formatCalendarDate } from '../dateUtils'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -474,7 +475,7 @@ export default function Inventory({ user, onLogout }) {
                 <tbody>
                   {kardexData.map(m => (
                     <tr key={m.id}>
-                      <td>{new Date(m.created_at).toLocaleString('es-MX')}</td>
+                      <td>{formatDateTime(m.created_at)}</td>
                       <td>{m.type === 'in' ? 'Entrada' : m.type === 'out' ? 'Salida' : 'Ajuste'}</td>
                       <td className={m.type === 'in' ? 'text-success' : 'text-danger'}>{m.type === 'in' ? '+' : '-'}{m.quantity}</td>
                       <td>{m.stock_before}</td>
@@ -514,7 +515,7 @@ export default function Inventory({ user, onLogout }) {
                     <tr key={b.id}>
                       <td>{b.batch_code || '-'}</td>
                       <td>{b.quantity}</td>
-                      <td style={{fontSize:'0.8rem'}}>{b.expiry_date ? new Date(b.expiry_date).toLocaleDateString('es-MX') : '-'}</td>
+                      <td style={{fontSize:'0.8rem'}}>{b.expiry_date ? formatCalendarDate(b.expiry_date) : '-'}</td>
                       <td><button className="btn btn-sm btn-danger" onClick={() => handleDeleteBatch(b.id)}>X</button></td>
                     </tr>
                   ))}
@@ -589,7 +590,7 @@ export default function Inventory({ user, onLogout }) {
                           <td><input type="checkbox" checked={selectedObsolete.has(p.id)} onChange={() => toggleObsoleteSelected(p.id)} /></td>
                           <td>{p.name} {p.barcode ? `(${p.barcode})` : ''}</td>
                           <td>{p.stock} {p.unit_type === 'kg' ? 'kg' : p.unit_type === 'l' ? 'L' : ''}</td>
-                          <td style={{fontSize: '0.85rem'}}>{p.last_restocked_at ? new Date(p.last_restocked_at + 'Z').toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' }) : 'Nunca'}</td>
+                          <td style={{fontSize: '0.85rem'}}>{p.last_restocked_at ? formatDate(p.last_restocked_at) : 'Nunca'}</td>
                         </tr>
                       ))}
                       {obsoleteProducts.length === 0 && <tr><td colSpan="4" className="text-center">No hay productos obsoletos con este criterio</td></tr>}
@@ -702,7 +703,7 @@ export default function Inventory({ user, onLogout }) {
                   <tbody>
                     {wasteList.map(w => (
                       <tr key={w.id}>
-                        <td style={{fontSize:'0.8rem'}}>{new Date(w.created_at).toLocaleString('es-MX')}</td>
+                        <td style={{fontSize:'0.8rem'}}>{formatDateTime(w.created_at)}</td>
                         <td>{w.product_name || '-'}</td>
                         <td>{w.waste_type === 'return_to_supplier' ? 'Devolución' : 'Merma'}</td>
                         <td>{w.quantity} {w.unit_type || ''}</td>

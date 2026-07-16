@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { suppliers as suppliersApi, purchases as purchasesApi, products as productsApi } from '../api'
+import { formatDate } from '../dateUtils'
 
 export default function Purchases({ user }) {
   const [suppliers, setSuppliers] = useState([])
@@ -213,7 +214,7 @@ export default function Purchases({ user }) {
   const printPurchase = (purchase) => {
     const win = window.open('', '_blank', 'width=700,height=900')
     if (!win) { setError('El navegador bloqueó la ventana de impresión'); return }
-    const fecha = new Date(purchase.created_at + 'Z').toLocaleDateString('es-MX', { dateStyle: 'long', timeZone: 'America/Mexico_City' })
+    const fecha = formatDate(purchase.created_at, { dateStyle: 'long' })
     const rows = purchase.items.map(item => `
       <tr>
         <td>${item.product_name}${item.barcode ? ` (${item.barcode})` : ''}</td>
@@ -327,7 +328,7 @@ export default function Purchases({ user }) {
                         <td>{p.invoice_number || '-'}</td>
                         <td>${(p.total || 0).toFixed(2)}</td>
                         <td>{statusBadge(p.status)}</td>
-                        <td>{new Date(p.created_at + 'Z').toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'America/Mexico_City' })}</td>
+                        <td>{formatDate(p.created_at, { day: 'numeric', month: 'short' })}</td>
                         <td>
                           <button className="btn btn-sm btn-outline" onClick={() => viewDetail(p.id)}>Ver</button>
                           <button className="btn btn-sm btn-outline" onClick={async () => { try { printPurchase(await purchasesApi.get(p.id)) } catch (e) { setError(e.message) } }}>Imprimir</button>
@@ -519,7 +520,7 @@ export default function Purchases({ user }) {
               {detailPurchase.supplier_phone && <div><strong>Telefono:</strong> {detailPurchase.supplier_phone}</div>}
               <div><strong>Factura:</strong> {detailPurchase.invoice_number || '-'}</div>
               <div><strong>Estado:</strong> {statusBadge(detailPurchase.status)}</div>
-              <div><strong>Fecha:</strong> {new Date(detailPurchase.created_at + 'Z').toLocaleDateString('es-MX', { dateStyle: 'long', timeZone: 'America/Mexico_City' })}</div>
+              <div><strong>Fecha:</strong> {formatDate(detailPurchase.created_at, { dateStyle: 'long' })}</div>
               {detailPurchase.notes && <div><strong>Notas:</strong> {detailPurchase.notes}</div>}
             </div>
             <table className="table">

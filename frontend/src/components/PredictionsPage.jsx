@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import PredictionsTab from './PredictionsTab'
 import { events } from '../api'
+import { formatLiveClock } from '../dateUtils'
 
 function formatDate(d) {
   if (!d) return ''
@@ -72,7 +73,7 @@ export default function PredictionsPage({ user, onLogout }) {
           <button className="nav-btn" onClick={() => window.location.hash = '#/pos'}>POS</button>
         </nav>
         <div className="header-right">
-          <span className="header-date">{clock.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'America/Mexico_City' })} {clock.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'America/Mexico_City' })}</span>
+          <span className="header-date">{formatLiveClock(clock, { day: 'numeric', month: 'short' })} {formatLiveClock(clock, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           <button className="btn btn-sm btn-outline" onClick={onLogout}>Salir</button>
         </div>
       </header>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { customers } from '../api'
+import { formatDateTime } from '../dateUtils'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -115,7 +116,7 @@ export default function Customers({ user, onLogout }) {
                   {customerHistory.sales.map(s => (
                     <tr key={s.id}>
                       <td>{s.id}</td>
-                      <td>{new Date(s.created_at).toLocaleString('es-MX')}</td>
+                      <td>{formatDateTime(s.created_at)}</td>
                       <td>{formatMoney(s.total)}</td>
                       <td style={{fontSize:'0.8rem'}}>{s.payment_method}</td>
                     </tr>
@@ -136,7 +137,7 @@ export default function Customers({ user, onLogout }) {
                 <tbody>
                   {customerHistory.payments.map(p => (
                     <tr key={p.id}>
-                      <td>{new Date(p.created_at).toLocaleString('es-MX')}</td>
+                      <td>{formatDateTime(p.created_at)}</td>
                       <td className={p.amount > 0 ? 'text-success' : 'text-danger'}>{formatMoney(p.amount)}</td>
                       <td>{p.payment_method}</td>
                       <td style={{fontSize:'0.8rem'}}>{p.notes || '-'}</td>

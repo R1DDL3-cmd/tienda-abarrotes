@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { getTheme, toggleTheme } from '../theme'
+import { formatLiveClock } from '../dateUtils'
 
 export default function AdminLayout({ user, onLogout, children }) {
   const navigate = useNavigate()
@@ -42,7 +43,7 @@ export default function AdminLayout({ user, onLogout, children }) {
           ))}
         </nav>
         <div className="header-right">
-          <span className="header-date">{clock.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'America/Mexico_City' })} {clock.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'America/Mexico_City' })}</span>
+          <span className="header-date">{formatLiveClock(clock, { day: 'numeric', month: 'short' })} {formatLiveClock(clock, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           <button className="btn btn-sm btn-outline" onClick={() => setThemeState(toggleTheme())} title={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}>
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>

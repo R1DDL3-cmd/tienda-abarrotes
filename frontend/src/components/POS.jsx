@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { sales, products, customers, network, accounting, withdrawals, hardware, settings as settingsApi } from '../api'
 import { getTheme, toggleTheme } from '../theme'
 import { enqueueSale, getQueue, syncQueue, discardFailed, retryFailed } from '../offlineQueue'
+import { formatDateTime, formatDate, formatTime, formatLiveClock } from '../dateUtils'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -502,7 +503,7 @@ export default function POS({ user, onLogout }) {
       <div class="center">
         ${storeHeader}
         <p>Ticket de Venta #${saleData.id}</p>
-        <p>${new Date(saleData.created_at.replace(' ', 'T') + 'Z').toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}</p>
+        <p>${formatDateTime(saleData.created_at)}</p>
         <p>Atendió: ${escapeHtml(saleData.created_by_name || user?.name)}</p>
         ${saleData.customer_name ? `<p>Cliente: ${escapeHtml(saleData.customer_name)}</p>` : ''}
       </div>
@@ -657,7 +658,7 @@ export default function POS({ user, onLogout }) {
         <div className="pos-header-left">
           <h1>Punto de Venta</h1>
           <span className="header-user">{user?.name}</span>
-          <span className="header-today">{clock.toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'America/Mexico_City' })} {clock.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'America/Mexico_City' })}</span>
+          <span className="header-today">{formatLiveClock(clock, { weekday: 'short', day: 'numeric', month: 'short' })} {formatLiveClock(clock, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           {registerData && (
             <span className="header-register-info">
               ${parseFloat((currentSession?.opening_amount ?? registerData.opening_amount) || 0).toFixed(0)} ini | ${parseFloat(registerData.totalExpenses || 0).toFixed(0)} gas | ${parseFloat(registerData.totalSales || 0).toFixed(0)} ven
@@ -967,7 +968,7 @@ export default function POS({ user, onLogout }) {
                   {salesHistory.map(s => (
                     <tr key={s.id} className={s.status === 'cancelled' ? 'row-cancelled' : ''}>
                       <td>{s.id}</td>
-                      <td>{new Date(s.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td>{formatTime(s.created_at, { hour: '2-digit', minute: '2-digit' })}</td>
                       <td>{s.items?.length || 0} prod.</td>
                       <td>{formatMoney(s.total)}</td>
                       <td style={{fontSize:'0.8rem'}}>{s.payment_method}</td>
@@ -1135,7 +1136,7 @@ export default function POS({ user, onLogout }) {
                   <tbody>
                     {withdrawalsList.map(w => (
                       <tr key={w.id}>
-                        <td>{new Date(w.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</td>
+                        <td>{formatTime(w.created_at, { hour: '2-digit', minute: '2-digit' })}</td>
                         <td>{'$' + parseFloat(w.amount).toFixed(2)}</td>
                         <td style={{fontSize:'0.85rem'}}>{w.description.replace(/^Retiro de efectivo[^—]*—\s*/, '')}</td>
                         <td>
@@ -1188,7 +1189,7 @@ export default function POS({ user, onLogout }) {
                   <tbody>
                     {offlineQueue.map(item => (
                       <tr key={item.id}>
-                        <td style={{fontSize:'0.8rem'}}>{new Date(item.createdAt).toLocaleString('es-MX')}</td>
+                        <td style={{fontSize:'0.8rem'}}>{formatDateTime(item.createdAt)}</td>
                         <td>{formatMoney(item.payload.items.reduce((s, i) => s + (i.unit_price * i.quantity - (i.discount || 0)), 0) - (item.payload.discount || 0))}</td>
                         <td>{item.payload.customer_name || '-'}</td>
                         <td>
@@ -1227,8 +1228,8 @@ export default function POS({ user, onLogout }) {
             </div>
             <div className="modal-body">
               <div style={{display:'flex', gap:'2rem', marginBottom:'1rem', flexWrap:'wrap'}}>
-                <div><strong>Fecha:</strong> {new Date(saleDetail.created_at).toLocaleDateString('es-MX')}</div>
-                <div><strong>Hora:</strong> {new Date(saleDetail.created_at).toLocaleTimeString('es-MX')}</div>
+                <div><strong>Fecha:</strong> {formatDate(saleDetail.created_at)}</div>
+                <div><strong>Hora:</strong> {formatTime(saleDetail.created_at)}</div>
                 <div><strong>Cajero:</strong> {saleDetail.created_by_name || '-'}</div>
                 <div><strong>Pago:</strong> {saleDetail.payment_method}</div>
               </div>

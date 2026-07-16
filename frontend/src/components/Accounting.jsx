@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { accounting, sales } from '../api'
+import { formatDateTime, formatDate, isSameLocalDay } from '../dateUtils'
 import Events from './Events'
 import PredictionsTab from './PredictionsTab'
 
@@ -235,8 +236,8 @@ export default function Accounting({ user, onLogout }) {
           {wasteData && wasteData.length > 0 && (
             <div className="dash-card">
               <h4>Mermas (hoy)</h4>
-              <div className="dash-number text-danger">{formatMoney(wasteData.filter(w => new Date(w.created_at).toDateString() === new Date().toDateString()).reduce((s, w) => s + w.total_loss, 0))}</div>
-              <p>{wasteData.filter(w => new Date(w.created_at).toDateString() === new Date().toDateString()).length} registros</p>
+              <div className="dash-number text-danger">{formatMoney(wasteData.filter(w => isSameLocalDay(w.created_at, new Date())).reduce((s, w) => s + w.total_loss, 0))}</div>
+              <p>{wasteData.filter(w => isSameLocalDay(w.created_at, new Date())).length} registros</p>
             </div>
           )}
         </div>
@@ -312,7 +313,7 @@ export default function Accounting({ user, onLogout }) {
               <tbody>
                 {movements.map(m => (
                   <tr key={m.id}>
-                    <td style={{fontSize:'0.8rem'}}>{new Date(m.created_at).toLocaleString('es-MX')}</td>
+                    <td style={{fontSize:'0.8rem'}}>{formatDateTime(m.created_at)}</td>
                     <td>
                       <span className={`badge ${m.type === 'opening' ? 'badge-success' : m.type === 'closing' ? 'badge-warning' : m.type === 'sale' ? 'badge-primary' : m.type === 'expense' ? 'badge-danger' : m.type === 'waste' ? 'badge-danger' : 'badge-secondary'}`}>
                         {m.type === 'opening' ? 'Apertura' : m.type === 'closing' ? 'Cierre' : m.type === 'sale' ? 'Venta' : m.type === 'expense' ? 'Gasto' : m.type === 'waste' ? 'Merma' : m.type === 'return' ? 'Devolución' : m.type}
@@ -347,7 +348,7 @@ export default function Accounting({ user, onLogout }) {
               <tbody>
                 {expenses.map(e => (
                   <tr key={e.id}>
-                    <td>{new Date(e.created_at).toLocaleDateString('es-MX')}</td>
+                    <td>{formatDate(e.created_at)}</td>
                     <td>{e.description}</td>
                     <td>{e.category || '-'}</td>
                     <td><strong>{formatMoney(e.amount)}</strong></td>
