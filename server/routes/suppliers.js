@@ -170,8 +170,10 @@ router.post('/purchases', (req, res) => {
     const tax = subtotal * 0.16;
     const total = subtotal + tax;
 
-    const result = db.run('INSERT INTO purchases (supplier_id, invoice_number, subtotal, tax, total, status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [supplier_id, invoice_number || '', subtotal, tax, total, purchaseStatus, notes || '', req.user.id]);
+    // db.run() (a diferencia de db.prepare().run()) no devuelve lastInsertRowid
+    // — por eso crear un pedido/compra estaba roto antes de este fix.
+    const result = db.prepare('INSERT INTO purchases (supplier_id, invoice_number, subtotal, tax, total, status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(supplier_id, invoice_number || '', subtotal, tax, total, purchaseStatus, notes || '', req.user.id);
 
     const purchaseId = result.lastInsertRowid;
 
@@ -202,14 +204,48 @@ router.put('/purchases/:id/receive', (req, res) => {
     if (purchase.status !== 'pending') return res.status(400).json({ error: 'Solo se pueden recibir pedidos pendientes' });
 
     const items = db.prepare('SELECT * FROM purchase_items WHERE purchase_id = ?').all(req.params.id);
-    
+
+    // El body puede traer overrides por artículo (lo que realmente llegó y a qué
+    // precio); si no vienen, se recibe tal cual fue pedido — así el flujo actual
+    // del frontend (botón "Recibir" sin modal) sigue funcionando igual.
+    const overrides = {};
+    if (Array.isArray(req.body?.items)) {
+      for (const o of req.body.items) {
+        if (o && o.id != null) overrides[o.id] = o;
+      }
+    }
+
+    let newSubtotal = 0;
+
     const transact = db.transaction(() => {
-      db.run('UPDATE purchases SET status = ? WHERE id = ?', ['completed', req.params.id]);
       items.forEach(item => {
-        if (item.product_id) {
-          updateProductStock(item.product_id, item.quantity, req.user.id, 'purchase', purchase.id, `Recepcion de pedido #${purchase.id}`);
+        const override = overrides[item.id] || {};
+        const receivedQty = override.received_quantity !== undefined && override.received_quantity !== null
+          ? parseFloat(override.received_quantity) || 0
+          : parseFloat(item.quantity) || 0;
+        const receivedPrice = override.received_unit_price !== undefined && override.received_unit_price !== null
+          ? parseFloat(override.received_unit_price) || 0
+          : parseFloat(item.unit_price) || 0;
+
+        db.run('UPDATE purchase_items SET received_quantity = ?, received_unit_price = ? WHERE id = ?',
+          [receivedQty, receivedPrice, item.id]);
+        newSubtotal += receivedQty * receivedPrice;
+
+        if (item.product_id && receivedQty > 0) {
+          updateProductStock(item.product_id, receivedQty, req.user.id, 'purchase', purchase.id, `Recepcion de pedido #${purchase.id}`);
+          // El costo recibido es el más confiable que tenemos del producto:
+          // actualizarlo aquí mantiene precisos los cálculos de ganancia
+          // (accounting.js /profit usa products.purchase_price).
+          if (receivedPrice > 0) {
+            db.run('UPDATE products SET purchase_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [receivedPrice, item.product_id]);
+          }
         }
       });
+
+      const newTax = newSubtotal * 0.16;
+      const newTotal = newSubtotal + newTax;
+      db.run('UPDATE purchases SET status = ?, subtotal = ?, tax = ?, total = ? WHERE id = ?',
+        ['completed', newSubtotal, newTax, newTotal, req.params.id]);
     });
     transact();
 
@@ -229,15 +265,19 @@ router.delete('/purchases/:id', (req, res) => {
         const items = db.prepare('SELECT * FROM purchase_items WHERE purchase_id = ?').all(req.params.id);
         items.forEach(item => {
           if (item.product_id) {
+            // Si el pedido pasó por recepción, lo que entró al inventario fue
+            // received_quantity (puede diferir de lo pedido); si no tiene
+            // valor (compra directa sin flujo de recepción), se usa quantity.
+            const qtyToRevert = item.received_quantity != null ? item.received_quantity : item.quantity;
             const product = db.prepare('SELECT stock, name FROM products WHERE id = ?').get(item.product_id);
             if (product) {
-              if (product.stock < item.quantity) {
-                throw new Error(`Stock insuficiente para cancelar: ${product.name} tiene ${product.stock}, necesita ${item.quantity}`);
+              if (product.stock < qtyToRevert) {
+                throw new Error(`Stock insuficiente para cancelar: ${product.name} tiene ${product.stock}, necesita ${qtyToRevert}`);
               }
               const stockBefore = product.stock;
-              const stockAfter = stockBefore - item.quantity;
+              const stockAfter = stockBefore - qtyToRevert;
               db.run('UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [stockAfter, item.product_id]);
-              recordInventoryMovement(item.product_id, 'out', item.quantity, stockBefore, stockAfter, 'purchase_cancel', purchase.id, `Cancelacion de compra #${purchase.id}`, req.user.id);
+              recordInventoryMovement(item.product_id, 'out', qtyToRevert, stockBefore, stockAfter, 'purchase_cancel', purchase.id, `Cancelacion de compra #${purchase.id}`, req.user.id);
             }
           }
         });

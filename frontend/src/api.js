@@ -191,6 +191,6 @@ export const purchases = {
   list: (params) => request(`/purchases?${new URLSearchParams(params || {})}`),
   get: (id) => request(`/purchases/${id}`),
   create: (data) => request('/purchases', { method: 'POST', body: JSON.stringify(data) }),
-  receive: (id) => request(`/purchases/${id}/receive`, { method: 'PUT' }),
+  receive: (id, items) => request(`/purchases/${id}/receive`, { method: 'PUT', body: JSON.stringify({ items }) }),
   cancel: (id) => request(`/purchases/${id}`, { method: 'DELETE' }),
 };

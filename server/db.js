@@ -555,6 +555,12 @@ const SCHEMA_MIGRATIONS = [
       db.sqlDb.run('DROP TABLE users_old');
     });
   },
+  // v4: recepción de compras — cantidad y precio realmente recibidos por
+  // artículo (pueden diferir de lo pedido). NULL = todavía no recibido.
+  (db) => {
+    try { db.exec('ALTER TABLE purchase_items ADD COLUMN received_quantity REAL'); } catch (e) {}
+    try { db.exec('ALTER TABLE purchase_items ADD COLUMN received_unit_price REAL'); } catch (e) {}
+  },
 ];
 
 function getSchemaVersion(db) {

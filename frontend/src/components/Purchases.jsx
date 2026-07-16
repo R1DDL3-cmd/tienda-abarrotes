@@ -15,6 +15,9 @@ export default function Purchases({ user }) {
   const [showPurchaseModal, setShowPurchaseModal] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [detailPurchase, setDetailPurchase] = useState(null)
+  const [showReceiveModal, setShowReceiveModal] = useState(false)
+  const [receivePurchase, setReceivePurchase] = useState(null)
+  const [receiveItems, setReceiveItems] = useState([])
   const [products, setProducts] = useState([])
   const [purchaseForm, setPurchaseForm] = useState({ supplier_id: '', invoice_number: '', notes: '', status: 'pending', items: [] })
   const [productSearch, setProductSearch] = useState('')
@@ -142,10 +145,34 @@ export default function Purchases({ user }) {
     } catch (e) { setError(e.message) }
   }
 
-  const handleReceivePurchase = async (purchaseId) => {
-    if (!confirm('Recibir este pedido? Se agregara stock al inventario.')) return
+  const openReceivePurchase = async (purchaseId) => {
     try {
-      await purchasesApi.receive(purchaseId)
+      const data = await purchasesApi.get(purchaseId)
+      setReceivePurchase(data)
+      setReceiveItems(data.items.map(item => ({
+        id: item.id,
+        product_name: item.product_name,
+        ordered_quantity: item.quantity,
+        ordered_unit_price: item.unit_price,
+        received_quantity: item.quantity,
+        received_unit_price: item.unit_price
+      })))
+      setShowReceiveModal(true)
+    } catch (e) { setError(e.message) }
+  }
+
+  const updateReceiveItem = (idx, field, value) => {
+    setReceiveItems(prev => prev.map((it, i) => i === idx ? { ...it, [field]: value } : it))
+  }
+
+  const confirmReceivePurchase = async () => {
+    try {
+      await purchasesApi.receive(receivePurchase.id, receiveItems.map(it => ({
+        id: it.id,
+        received_quantity: parseFloat(it.received_quantity) || 0,
+        received_unit_price: parseFloat(it.received_unit_price) || 0
+      })))
+      setShowReceiveModal(false)
       if (selectedSupplier) loadPurchases(selectedSupplier.id)
       setSuccess('Pedido recibido e inventariado')
     } catch (e) { setError(e.message) }
@@ -233,7 +260,7 @@ export default function Purchases({ user }) {
                         <td>{new Date(p.created_at + 'Z').toLocaleDateString('es-MX', { day: 'numeric', month: 'short', timeZone: 'America/Mexico_City' })}</td>
                         <td>
                           <button className="btn btn-sm btn-outline" onClick={() => viewDetail(p.id)}>Ver</button>
-                          {p.status === 'pending' && <button className="btn btn-sm btn-success" onClick={() => handleReceivePurchase(p.id)}>Recibir</button>}
+                          {p.status === 'pending' && <button className="btn btn-sm btn-success" onClick={() => openReceivePurchase(p.id)}>Recibir</button>}
                           {p.status !== 'cancelled' && <button className="btn btn-sm btn-danger" onClick={() => handleCancelPurchase(p.id)}>Cancelar</button>}
                         </td>
                       </tr>
@@ -375,6 +402,39 @@ export default function Purchases({ user }) {
         </div>
       )}
 
+      {showReceiveModal && receivePurchase && (
+        <div className="modal-overlay" onClick={() => setShowReceiveModal(false)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <h3>Recibir Pedido #{receivePurchase.id}</h3>
+            <p className="text-muted">Confirma lo que realmente llegó. Si cambió la cantidad o el precio, ajústalo aquí — el inventario y el costo del producto se actualizan con estos valores, no con lo pedido.</p>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Pedido</th>
+                  <th>Cantidad recibida</th>
+                  <th>Precio recibido</th>
+                </tr>
+              </thead>
+              <tbody>
+                {receiveItems.map((item, idx) => (
+                  <tr key={item.id}>
+                    <td>{item.product_name}</td>
+                    <td className="text-muted">{item.ordered_quantity} x ${(item.ordered_unit_price || 0).toFixed(2)}</td>
+                    <td><input type="number" className="input" style={{width: '90px'}} min="0" step="0.01" value={item.received_quantity} onChange={e => updateReceiveItem(idx, 'received_quantity', e.target.value)} /></td>
+                    <td><input type="number" className="input" style={{width: '100px'}} min="0" step="0.01" value={item.received_unit_price} onChange={e => updateReceiveItem(idx, 'received_unit_price', e.target.value)} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowReceiveModal(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={confirmReceivePurchase}>Confirmar recepción</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showDetailModal && detailPurchase && (
         <div className="modal-overlay" onClick={() => setShowDetailModal(false)}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
@@ -390,7 +450,10 @@ export default function Purchases({ user }) {
             </div>
             <table className="table">
               <thead>
-                <tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th>Subtotal</th></tr>
+                <tr>
+                  <th>Producto</th><th>Pedido</th><th>Precio pedido</th>
+                  {detailPurchase.status === 'completed' && <><th>Recibido</th><th>Precio recibido</th></>}
+                </tr>
               </thead>
               <tbody>
                 {detailPurchase.items.map((item, i) => (
@@ -398,7 +461,12 @@ export default function Purchases({ user }) {
                     <td>{item.product_name} {item.barcode ? `(${item.barcode})` : ''}</td>
                     <td>{item.quantity}</td>
                     <td>${(item.unit_price || 0).toFixed(2)}</td>
-                    <td>${(item.subtotal || 0).toFixed(2)}</td>
+                    {detailPurchase.status === 'completed' && (
+                      <>
+                        <td>{item.received_quantity != null ? item.received_quantity : item.quantity}</td>
+                        <td>${(item.received_unit_price != null ? item.received_unit_price : item.unit_price || 0).toFixed(2)}</td>
+                      </>
+                    )}
                   </tr>
                 ))}
               </tbody>
