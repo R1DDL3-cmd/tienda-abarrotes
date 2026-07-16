@@ -32,19 +32,23 @@ export default function App() {
   const [cashCountAmount, setCashCountAmount] = useState('')
   const [sessionToClose, setSessionToClose] = useState(null)
   const [error, setError] = useState('')
-  const [isOnline, setIsOnline] = useState(navigator.onLine)
+  const [isOnline, setIsOnline] = useState(true)
 
-  // Checkpoint 1 de modo offline: el catálogo (productos/clientes) queda
-  // disponible sin conexión gracias al service worker (ver vite.config.js),
-  // pero cobrar SÍ requiere red todavía — la cola de ventas offline es un
-  // checkpoint aparte. Este banner avisa cuándo los datos que se ven pueden
-  // no estar al día y cuándo cobrar no va a funcionar.
+  // Ojo: NO se usa navigator.onLine — solo dice si el sistema operativo tiene
+  // alguna red/internet, no si ESTE servidor responde. En el PC principal el
+  // servidor vive en localhost, siempre alcanzable sin importar el estado de
+  // internet; en la tablet lo que importa es si llega a la IP del PC por
+  // WiFi, no si hay internet real. Por eso se prueba de verdad contra la API
+  // en vez de confiar en la señal genérica del navegador.
   useEffect(() => {
-    const goOnline = () => setIsOnline(true)
-    const goOffline = () => setIsOnline(false)
-    window.addEventListener('online', goOnline)
-    window.addEventListener('offline', goOffline)
-    return () => { window.removeEventListener('online', goOnline); window.removeEventListener('offline', goOffline) }
+    let cancelled = false
+    const check = () => {
+      fetch('/api/network-info').then(r => { if (!cancelled) setIsOnline(r.ok) }).catch(() => { if (!cancelled) setIsOnline(false) })
+    }
+    check()
+    const interval = setInterval(check, 15000)
+    window.addEventListener('online', check)
+    return () => { cancelled = true; clearInterval(interval); window.removeEventListener('online', check) }
   }, [])
 
   useEffect(() => {

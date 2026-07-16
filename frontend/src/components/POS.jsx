@@ -413,16 +413,12 @@ export default function POS({ user, onLogout }) {
       setSaleDone({ sale: { total }, items: cart })
     }
 
-    // navigator.onLine solo detecta la interfaz de red (WiFi prendido o no),
-    // no si el servidor específicamente responde — así que además de este
-    // atajo rápido, el catch de abajo también encola si el intento real
-    // falla por conexión (ej. el WiFi sigue "conectado" pero el PC principal
-    // se cayó, o el router murió a medio intento).
-    if (!navigator.onLine) {
-      queueOffline()
-      return
-    }
-
+    // No se usa navigator.onLine como atajo: solo refleja si el sistema
+    // operativo tiene alguna red/internet, no si ESTE servidor responde. En
+    // el PC principal el servidor vive en localhost, que siempre es
+    // alcanzable sin importar si hay internet — usar navigator.onLine ahí
+    // bloqueaba ventas sin motivo real. Se intenta la venta de verdad
+    // siempre, y solo se encola si el intento en sí falla por conexión.
     try {
       const res = await sales.create(salePayload)
       setSaleDone({ sale: res.sale, items: res.items })
