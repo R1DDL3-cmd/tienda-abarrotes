@@ -3,6 +3,7 @@ import { auth, backup, settings as settingsApi } from '../api'
 import { formatDate, formatDateTime } from '../dateUtils'
 import { getTheme, setTheme } from '../theme'
 import { getShortcuts, setShortcutKey, resetShortcuts, eventToKeyString, DEFAULT_SHORTCUTS } from '../shortcuts'
+import { getManualOffsetHours, setManualOffsetHours } from '../dateUtils'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -28,6 +29,8 @@ export default function Settings({ user }) {
   const [theme, setThemeState] = useState(getTheme())
   const [shortcuts, setShortcutsState] = useState(getShortcuts())
   const [capturingShortcut, setCapturingShortcut] = useState(null)
+  const [manualOffsetInput, setManualOffsetInput] = useState(String(getManualOffsetHours()))
+  const [previewClock, setPreviewClock] = useState(new Date())
 
   const handleThemeChange = (value) => {
     setTheme(value)
@@ -54,6 +57,18 @@ export default function Settings({ user }) {
   const handleResetShortcuts = () => {
     resetShortcuts()
     setShortcutsState(getShortcuts())
+  }
+
+  useEffect(() => {
+    const id = setInterval(() => setPreviewClock(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const handleSaveManualOffset = () => {
+    const hours = parseFloat(manualOffsetInput) || 0
+    setManualOffsetHours(hours)
+    setSuccess('Ajuste de hora guardado')
+    setTimeout(() => setSuccess(''), 3000)
   }
 
   const loadUsers = async () => {
@@ -202,6 +217,7 @@ export default function Settings({ user }) {
     { id: 'store', label: 'Tienda' },
     { id: 'appearance', label: 'Apariencia' },
     { id: 'shortcuts', label: 'Atajos' },
+    { id: 'time', label: 'Hora' },
     { id: 'users', label: 'Usuarios' },
     { id: 'password', label: 'Contraseña' },
     { id: 'security', label: 'Seguridad' },
@@ -275,6 +291,34 @@ export default function Settings({ user }) {
               🌙 Oscuro
             </button>
           </div>
+        </div>
+      )}
+
+      {tab === 'time' && (
+        <div className="card" style={{maxWidth:'450px', padding:'1.5rem'}}>
+          <h3 style={{marginTop:0}}>Ajuste de Hora</h3>
+          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
+            La hora se corrige automáticamente, pero si aún así se ve mal, ajústala aquí (en horas; usa decimales para minutos, ej. 0.5 = media hora). Se guarda en este dispositivo.
+          </p>
+          <div className="form-group">
+            <label>Hora actual con este ajuste:</label>
+            <p style={{fontSize:'1.3rem', fontWeight:'bold', margin:'0.25rem 0 1rem 0'}}>
+              {new Date(previewClock.getTime() + (parseFloat(manualOffsetInput) || 0) * 60 * 60 * 1000)
+                .toLocaleString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </p>
+          </div>
+          <div className="form-group" style={{display:'flex', gap:'0.5rem', alignItems:'flex-end'}}>
+            <div style={{flex:1}}>
+              <label>Ajuste manual (horas)</label>
+              <input type="number" step="0.5" className="input" value={manualOffsetInput} onChange={e => setManualOffsetInput(e.target.value)} />
+            </div>
+            <button className="btn btn-primary" onClick={handleSaveManualOffset}>Guardar</button>
+          </div>
+          {parseFloat(manualOffsetInput) !== 0 && (
+            <p style={{fontSize:'0.8rem', color:'var(--text-muted)', marginTop:'0.5rem'}}>
+              Con {parseFloat(manualOffsetInput) > 0 ? '+' : ''}{parseFloat(manualOffsetInput)}h, la hora mostrada se mueve {parseFloat(manualOffsetInput) > 0 ? 'hacia adelante' : 'hacia atrás'}.
+            </p>
+          )}
         </div>
       )}
 

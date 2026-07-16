@@ -18,6 +18,22 @@
 // Si la tienda estuviera en una franja fronteriza con horario de verano,
 // esto habría que hacerlo configurable — no es el caso por ahora.
 const MX_OFFSET_HOURS = 6;
+const MANUAL_OFFSET_KEY = 'manual_time_offset_hours';
+
+// Ajuste manual adicional, por si el offset fijo de arriba no cae exacto
+// (ej. una actualización de Electron cambia el comportamiento, o la tienda
+// está en otra zona horaria). Se guarda en horas, admite decimales para
+// minutos (0.5 = media hora). Por defecto 0 — no cambia nada del cálculo ya
+// corregido a menos que alguien lo ajuste desde Configuración.
+export function getManualOffsetHours() {
+  const raw = localStorage.getItem(MANUAL_OFFSET_KEY);
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function setManualOffsetHours(hours) {
+  localStorage.setItem(MANUAL_OFFSET_KEY, String(hours));
+}
 
 export function parseServerDate(value) {
   if (!value) return null;
@@ -26,7 +42,7 @@ export function parseServerDate(value) {
       ? value.replace(' ', 'T') + 'Z'
       : value
   );
-  return new Date(iso.getTime() - MX_OFFSET_HOURS * 60 * 60 * 1000);
+  return new Date(iso.getTime() - (MX_OFFSET_HOURS - getManualOffsetHours()) * 60 * 60 * 1000);
 }
 
 export function formatDateTime(value, opts = {}) {
@@ -74,7 +90,11 @@ export function isSameLocalDay(a, b) {
 // Para el reloj en vivo del header: "now" ya es la hora local correcta del
 // sistema operativo (confirmado: Windows tiene bien la hora) — el bug solo
 // aparece al forzar la conversión vía timeZone: 'America/Mexico_City'. Por
-// eso aquí NO se re-convierte, se usa la hora local del sistema tal cual.
+// eso aquí NO se re-convierte, solo se le aplica el ajuste manual (si hay
+// uno configurado) para que el reloj y los tickets/historial queden
+// consistentes entre sí.
 export function formatLiveClock(date, opts = {}) {
-  return date.toLocaleString('es-MX', opts);
+  const manual = getManualOffsetHours();
+  const adjusted = manual ? new Date(date.getTime() + manual * 60 * 60 * 1000) : date;
+  return adjusted.toLocaleString('es-MX', opts);
 }

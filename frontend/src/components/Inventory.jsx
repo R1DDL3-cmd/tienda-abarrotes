@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { products, accounting } from '../api'
 import { formatDateTime, formatDate, formatCalendarDate } from '../dateUtils'
+import { getTheme, toggleTheme } from '../theme'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
 }
 
 export default function Inventory({ user, onLogout }) {
+  // Cuando el rol es 'inventory', esta pantalla se usa SOLA (App.jsx no la
+  // envuelve en AdminLayout, que es donde normalmente viven el botón de tema
+  // y el de salir). Antes esto dejaba a ese rol sin forma de cambiar de tema
+  // ni de cerrar sesión desde la interfaz.
+  const isStandalone = user?.role === 'inventory'
+  const [theme, setThemeState] = useState(getTheme())
   const [productList, setProductList] = useState([])
   const [totalPages, setTotalPages] = useState(1)
   const [page, setPage] = useState(1)
@@ -342,6 +349,14 @@ export default function Inventory({ user, onLogout }) {
             </button>
           )}
           <button className="btn btn-sm btn-outline" onClick={openCategoriesModal}>Categorías</button>
+          {isStandalone && (
+            <>
+              <button className="btn btn-sm btn-outline" onClick={() => setThemeState(toggleTheme())} title={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}>
+                {theme === 'dark' ? '☀️' : '🌙'}
+              </button>
+              <button className="btn btn-sm btn-outline" onClick={onLogout}>Salir</button>
+            </>
+          )}
         </div>
       </div>
 
