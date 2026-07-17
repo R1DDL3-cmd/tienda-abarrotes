@@ -47,13 +47,16 @@ export default function Purchases({ user }) {
     // funcionar. Ahora se usa el vínculo real supplier_id.
     if (productSearch && products.length > 0 && purchaseForm.supplier_id) {
       const q = productSearch.toLowerCase()
-      setFilteredProducts(products.filter(p => {
+      const matches = products.filter(p => {
         const matchesSupplier = p.supplier_id === purchaseForm.supplier_id
         const matchesSearch = p.name.toLowerCase().includes(q) || (p.barcode && p.barcode.includes(q))
         return matchesSupplier && matchesSearch
-      }))
+      })
+      setFilteredProducts(matches)
+      setShowProductDropdown(matches.length > 0)
     } else {
       setFilteredProducts([])
+      setShowProductDropdown(false)
     }
   }, [productSearch, products, purchaseForm.supplier_id, suppliers])
 
@@ -76,7 +79,7 @@ export default function Purchases({ user }) {
   const loadProducts = async () => {
     try {
       const data = await productsApi.all()
-      setProducts(data)
+      setProducts(data.products || [])
     } catch (e) { setError(e.message) }
   }
 

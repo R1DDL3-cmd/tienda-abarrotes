@@ -35,6 +35,14 @@ export function buildStoreHeader(storeInfo) {
 
 // Devuelve la ventana abierta, o null si el navegador bloqueó el popup —
 // quien llame debe avisarle al usuario en ese caso.
+//
+// window.onafterprint cierra la ventana sola en cuanto se cierra el diálogo
+// de impresión (se haya impreso o cancelado). Antes se quedaba abierta
+// indefinidamente hasta que alguien la cerrara a mano — y en Electron, esta
+// ventana es una BrowserWindow real (ver electron/main.js), así que mientras
+// siguiera abierta el teclado de la ventana principal se quedaba sin
+// responder (el arreglo de foco solo se dispara cuando esta ventana se
+// cierra, no cuando el diálogo nativo de impresión se cierra).
 export function openTicketWindow({ title, bodyHtml }) {
   const win = window.open('', '_blank', 'width=380,height=600')
   if (!win) return null
@@ -42,7 +50,10 @@ export function openTicketWindow({ title, bodyHtml }) {
     <html><head><title>${escapeHtml(title)}</title>
     <style>${TICKET_STYLE}</style></head><body>
     ${bodyHtml}
-    <script>window.print()</script>
+    <script>
+      window.onafterprint = () => window.close()
+      window.print()
+    </script>
     </body></html>
   `)
   win.document.close()
