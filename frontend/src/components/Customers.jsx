@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { customers } from '../api'
 import { formatDateTime } from '../dateUtils'
+import { modalKeys } from '../modalKeys'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -180,7 +181,7 @@ export default function Customers({ user, onLogout }) {
       )}
 
       {showPaymentModal && (
-        <div className="modal-overlay" onClick={() => setShowPaymentModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowPaymentModal(false)} onKeyDown={modalKeys(() => setShowPaymentModal(false), handlePayment)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Registrar Pago - {selectedCustomer.name}</h3>
             <p>Saldo actual: <strong className={selectedCustomer.balance > 0 ? 'text-danger' : ''}>{formatMoney(selectedCustomer.balance)}</strong></p>

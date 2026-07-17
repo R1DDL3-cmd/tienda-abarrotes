@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { events } from '../api'
+import { modalKeys } from '../modalKeys'
 
 function formatDate(d) {
   if (!d) return ''
@@ -250,7 +251,7 @@ export default function Events({ user }) {
       )}
 
       {measureResult && (
-        <div className="modal-overlay" onClick={() => setMeasureResult(null)}>
+        <div className="modal-overlay" onClick={() => setMeasureResult(null)} onKeyDown={modalKeys(() => setMeasureResult(null), () => setMeasureResult(null))}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>Resultado de Medicion</h3>
             <p>Venta esperada por dia: <strong>${parseFloat(measureResult.expectedDaily || 0).toFixed(2)}</strong></p>

@@ -4,6 +4,8 @@ import { getTheme, toggleTheme } from '../theme'
 import { enqueueSale, getQueue, syncQueue, discardFailed, retryFailed } from '../offlineQueue'
 import { formatDateTime, formatDate, formatTime, formatLiveClock } from '../dateUtils'
 import { getShortcuts, matchesShortcut } from '../shortcuts'
+import { escapeHtml, buildStoreHeader, openTicketWindow } from '../ticketPrint'
+import { modalKeys } from '../modalKeys'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -466,11 +468,8 @@ export default function POS({ user, onLogout }) {
 
   const PAYMENT_METHOD_LABELS = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', credit: 'Fiado', fiado: 'Fiado' }
 
-  const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-
   const printTicket = (saleData, items) => {
     if (!saleData) return
-    const w = window.open('', '_blank', 'width=380,height=600')
     const ticketItems = items || []
     const itemsHtml = ticketItems.map(i => {
       const isWeight = i.unit_type === 'kg' || i.unit_type === 'l'
@@ -498,34 +497,15 @@ export default function POS({ user, onLogout }) {
     const isCredit = saleData.customer_id && /credit|fiado/.test(saleData.payment_method || '')
     const balanceHtml = isCredit && saleData.customer_balance != null ? `
       <div class="line"></div>
-      <div class="center" style="font-weight:bold">
-        <p>SALDO PENDIENTE DE ${escapeHtml(saleData.customer_name || 'CLIENTE')}:</p>
-        <p style="font-size:14px">${formatMoney(saleData.customer_balance)}</p>
+      <div class="center total-box">
+        <p><strong>SALDO PENDIENTE DE ${escapeHtml(saleData.customer_name || 'CLIENTE')}</strong></p>
+        <p class="total-amount"><strong>${formatMoney(saleData.customer_balance)}</strong></p>
       </div>
     ` : ''
 
-    const storeHeader = `
-      <h3>${escapeHtml(storeInfo.store_name)}</h3>
-      ${storeInfo.store_address ? `<p>${escapeHtml(storeInfo.store_address)}</p>` : ''}
-      ${storeInfo.store_phone ? `<p>Tel: ${escapeHtml(storeInfo.store_phone)}</p>` : ''}
-    `
-
-    w.document.write(`
-      <html><head><title>Ticket - Venta #${saleData.id}</title>
-      <style>
-        body { font-family: 'Courier New', monospace; font-size: 12px; width: 58mm; margin: 0; padding: 5px; }
-        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        th, td { padding: 2px 0; overflow-wrap: break-word; word-break: break-word; }
-        .product-name { max-width: 0; }
-        .center { text-align: center; }
-        .right { text-align: right; }
-        .line { border-top: 1px dashed #000; margin: 5px 0; }
-        h3 { margin: 5px 0; overflow-wrap: break-word; }
-        p { margin: 2px 0; }
-        @media print { body { width: 58mm; } }
-      </style></head><body>
+    const bodyHtml = `
       <div class="center">
-        ${storeHeader}
+        ${buildStoreHeader(storeInfo)}
         <p>Ticket de Venta #${saleData.id}</p>
         <p>${formatDateTime(saleData.created_at)}</p>
         <p>Atendió: ${escapeHtml(saleData.created_by_name || user?.name)}</p>
@@ -540,18 +520,20 @@ export default function POS({ user, onLogout }) {
       <div class="line"></div>
       <div class="right">
         ${saleData.discount > 0 ? `<p>Descuento: -${formatMoney(saleData.discount)}</p>` : ''}
-        <p><strong>TOTAL: ${formatMoney(saleData.total)}</strong></p>
         <p>Pago: ${escapeHtml(paymentLine)}</p>
+        <div class="total-box">
+          <p class="total-amount">TOTAL: ${formatMoney(saleData.total)}</p>
+        </div>
       </div>
       ${balanceHtml}
       <div class="line"></div>
       <div class="center">
         <p>${escapeHtml(storeInfo.ticket_footer)}</p>
       </div>
-      <script>window.print()</script>
-      </body></html>
-    `)
-    w.document.close()
+    `
+
+    const win = openTicketWindow({ title: `Ticket - Venta #${saleData.id}`, bodyHtml })
+    if (!win) setError('El navegador bloqueó la ventana de impresión')
   }
 
   const handlePrintTicket = () => {
@@ -909,7 +891,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {paymentModal && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Enter' && getPaymentTotal() >= total) { handleCompleteSale() } if (e.key === 'Escape') { setPaymentModal(false) } }}>
+        <div className="modal-overlay" onKeyDown={modalKeys(() => setPaymentModal(false), () => { if (getPaymentTotal() >= total) handleCompleteSale() })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2>Cobrar Venta</h2>
             <p className="modal-total">Total a cobrar: {formatMoney(total)}</p>
@@ -948,7 +930,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {customerModal && (
-        <div className="modal-overlay" onClick={() => setCustomerModal(false)}>
+        <div className="modal-overlay" onClick={() => setCustomerModal(false)} onKeyDown={modalKeys(() => setCustomerModal(false), null)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Seleccionar Cliente</h3>
             <input type="text" className="input-lg" placeholder="Buscar cliente..." value={customerSearch} onChange={async (e) => {
@@ -971,7 +953,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {historyModal && (
-        <div className="modal-overlay" onClick={() => setHistoryModal(false)}>
+        <div className="modal-overlay" onClick={() => setHistoryModal(false)} onKeyDown={modalKeys(() => setHistoryModal(false), () => setHistoryModal(false))}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Ventas de Hoy</h2>
@@ -1016,7 +998,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {individualChoice && (
-        <div className="modal-overlay" onClick={() => setIndividualChoice(null)}>
+        <div className="modal-overlay" onClick={() => setIndividualChoice(null)} onKeyDown={modalKeys(() => setIndividualChoice(null), null)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>{individualChoice.product.name}</h3>
             <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
@@ -1041,7 +1023,7 @@ export default function POS({ user, onLogout }) {
         </div>
       )}
 
-      <div className="modal-overlay" style={{display: showSecurityModal ? 'flex' : 'none'}} onClick={e => e.preventDefault()}>
+      <div className="modal-overlay" style={{display: showSecurityModal ? 'flex' : 'none'}} onClick={e => e.preventDefault()} onKeyDown={modalKeys(null, null)}>
         <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
           <h3>Producto No Registrado</h3>
           <p>Codigo: <strong>{securityBarcode}</strong></p>
@@ -1068,12 +1050,12 @@ export default function POS({ user, onLogout }) {
       </div>
 
       {newCustomerModal && (
-        <div className="modal-overlay" onClick={() => setNewCustomerModal(false)}>
+        <div className="modal-overlay" onClick={() => setNewCustomerModal(false)} onKeyDown={modalKeys(() => { setNewCustomerModal(false); setError('') }, handleNewCustomer)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Nuevo Cliente</h3>
             <div className="form-group">
               <label>Nombre del Cliente *</label>
-              <input type="text" className="input-lg" value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)} placeholder="Nombre completo" autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleNewCustomer() }} />
+              <input type="text" className="input-lg" value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)} placeholder="Nombre completo" autoFocus />
             </div>
             {error && <div className="alert alert-error">{error}</div>}
             <div className="modal-actions">
@@ -1085,7 +1067,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {showLogoutConfirm && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Enter') { handleLogoutConfirm() } if (e.key === 'Escape') { setShowLogoutConfirm(false) } }}>
+        <div className="modal-overlay" onClick={() => setShowLogoutConfirm(false)} onKeyDown={modalKeys(() => setShowLogoutConfirm(false), handleLogoutConfirm)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Cerrar Sesión</h3>
             <p>¿Seguro que deseas salir?</p>
@@ -1098,7 +1080,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {showStartDayModal && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleStartDay() } }}>
+        <div className="modal-overlay" onKeyDown={modalKeys(null, handleStartDay)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Iniciar Turno</h3>
             <p>Debe ingresar el efectivo actual en caja para iniciar su turno:</p>
@@ -1113,7 +1095,7 @@ export default function POS({ user, onLogout }) {
         </div>
       )}
       {showEndDayModal && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleEndDaySubmit() } if (e.key === 'Escape') { setShowEndDayModal(false) } }}>
+        <div className="modal-overlay" onClick={() => setShowEndDayModal(false)} onKeyDown={modalKeys(() => setShowEndDayModal(false), handleEndDaySubmit)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Cerrar Día</h3>
             <p>¿Cuánto dinero hay en caja al cierre del día?</p>
@@ -1129,7 +1111,7 @@ export default function POS({ user, onLogout }) {
         </div>
       )}
       {showCashCountModal && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCashCountSubmit() } if (e.key === 'Escape') { setShowCashCountModal(false) } }}>
+        <div className="modal-overlay" onClick={() => setShowCashCountModal(false)} onKeyDown={modalKeys(() => setShowCashCountModal(false), handleCashCountSubmit)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Conteo de Caja</h3>
             <p>Ingresa el efectivo que hay en caja para cerrar el día:</p>
@@ -1145,7 +1127,7 @@ export default function POS({ user, onLogout }) {
         </div>
       )}
       {showWithdrawalModal && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleWithdrawalSubmit() } if (e.key === 'Escape') { setShowWithdrawalModal(false); setError('') } }}>
+        <div className="modal-overlay" onClick={() => { setShowWithdrawalModal(false); setError('') }} onKeyDown={modalKeys(() => { setShowWithdrawalModal(false); setError('') }, handleWithdrawalSubmit)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Retiro de Efectivo</h3>
             <p>Registra la salida de efectivo de la caja:</p>
@@ -1166,7 +1148,7 @@ export default function POS({ user, onLogout }) {
         </div>
       )}
       {showWithdrawalsList && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" onClick={() => setShowWithdrawalsList(false)} onKeyDown={modalKeys(() => setShowWithdrawalsList(false), () => setShowWithdrawalsList(false))}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Retiros de Hoy</h3>
@@ -1204,7 +1186,7 @@ export default function POS({ user, onLogout }) {
         </div>
       )}
       {cancelModal && (
-        <div className="modal-overlay" onClick={() => setCancelModal(null)} onKeyDown={(e) => { if (e.key === 'Escape') { setCancelModal(null); setCancelReason('') } }}>
+        <div className="modal-overlay" onClick={() => setCancelModal(null)} onKeyDown={modalKeys(() => { setCancelModal(null); setCancelReason('') }, () => handleCancelSale(cancelModal.id))}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Cancelar Venta #{cancelModal.id}</h3>
             <p>Total: {formatMoney(cancelModal.total)}</p>
@@ -1222,7 +1204,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {showQueueModal && (
-        <div className="modal-overlay" onClick={() => setShowQueueModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowQueueModal(false)} onKeyDown={modalKeys(() => setShowQueueModal(false), () => setShowQueueModal(false))}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Ventas Sin Sincronizar</h3>
@@ -1272,7 +1254,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {saleDetail && (
-        <div className="modal-overlay" onClick={() => setSaleDetail(null)}>
+        <div className="modal-overlay" onClick={() => setSaleDetail(null)} onKeyDown={modalKeys(() => setSaleDetail(null), () => setSaleDetail(null))}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Detalle de Venta #{saleDetail.id}</h2>
@@ -1322,7 +1304,7 @@ export default function POS({ user, onLogout }) {
       )}
 
       {showCashierExpenseModal && (
-        <div className="modal-overlay" onClick={() => setShowCashierExpenseModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowCashierExpenseModal(false)} onKeyDown={modalKeys(() => { setShowCashierExpenseModal(false); setError('') }, handleCashierExpenseSubmit)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Registrar Gasto</h3>
             <div className="form-group">

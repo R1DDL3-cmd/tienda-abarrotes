@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { suppliers as suppliersApi, purchases as purchasesApi, products as productsApi, settings as settingsApi } from '../api'
 import { formatDate, formatDateTime } from '../dateUtils'
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
+import { escapeHtml, buildStoreHeader, openTicketWindow } from '../ticketPrint'
+import { modalKeys } from '../modalKeys'
 
 export default function Purchases({ user }) {
   const [storeInfo, setStoreInfo] = useState({ store_name: 'Tienda de Abarrotes', store_address: '', store_phone: '' })
@@ -225,9 +223,6 @@ export default function Purchases({ user }) {
   // que los tickets de venta del POS, para que salga en la misma impresora
   // de la caja sin tener que configurar una impresora de página completa aparte.
   const printPurchase = (purchase) => {
-    const win = window.open('', '_blank', 'width=380,height=600')
-    if (!win) { setError('El navegador bloqueó la ventana de impresión'); return }
-
     const itemsHtml = (purchase.items || []).map(item => `
       <tr>
         <td class="product-name">${escapeHtml(item.product_name)}</td>
@@ -239,28 +234,9 @@ export default function Purchases({ user }) {
 
     const statusLabel = { pending: 'PEDIDO PENDIENTE', completed: 'COMPRA RECIBIDA', cancelled: 'CANCELADA' }[purchase.status] || purchase.status
 
-    const storeHeader = `
-      <h3>${escapeHtml(storeInfo.store_name)}</h3>
-      ${storeInfo.store_address ? `<p>${escapeHtml(storeInfo.store_address)}</p>` : ''}
-      ${storeInfo.store_phone ? `<p>Tel: ${escapeHtml(storeInfo.store_phone)}</p>` : ''}
-    `
-
-    win.document.write(`
-      <html><head><title>Pedido #${purchase.id}</title>
-      <style>
-        body { font-family: 'Courier New', monospace; font-size: 12px; width: 58mm; margin: 0; padding: 5px; }
-        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        th, td { padding: 2px 0; overflow-wrap: break-word; word-break: break-word; }
-        .product-name { max-width: 0; }
-        .center { text-align: center; }
-        .right { text-align: right; }
-        .line { border-top: 1px dashed #000; margin: 5px 0; }
-        h3 { margin: 5px 0; overflow-wrap: break-word; }
-        p { margin: 2px 0; }
-        @media print { body { width: 58mm; } }
-      </style></head><body>
+    const bodyHtml = `
       <div class="center">
-        ${storeHeader}
+        ${buildStoreHeader(storeInfo)}
         <p><strong>${statusLabel}</strong></p>
         <p>Pedido #${purchase.id}${purchase.invoice_number ? ' — Factura: ' + escapeHtml(purchase.invoice_number) : ''}</p>
         <p>${formatDateTime(purchase.created_at)}</p>
@@ -278,13 +254,15 @@ export default function Purchases({ user }) {
       <div class="right">
         <p>Subtotal: $${(purchase.subtotal || 0).toFixed(2)}</p>
         <p>IVA: $${(purchase.tax || 0).toFixed(2)}</p>
-        <p><strong>TOTAL: $${(purchase.total || 0).toFixed(2)}</strong></p>
+        <div class="total-box">
+          <p class="total-amount">TOTAL: $${(purchase.total || 0).toFixed(2)}</p>
+        </div>
       </div>
       ${purchase.notes ? `<div class="line"></div><p>Notas: ${escapeHtml(purchase.notes)}</p>` : ''}
-      <script>window.print()</script>
-      </body></html>
-    `)
-    win.document.close()
+    `
+
+    const win = openTicketWindow({ title: `Pedido #${purchase.id}`, bodyHtml })
+    if (!win) setError('El navegador bloqueó la ventana de impresión')
   }
 
   const statusBadge = (status) => {
@@ -372,7 +350,7 @@ export default function Purchases({ user }) {
       </div>
 
       {showSupplierModal && (
-        <div className="modal-overlay" onClick={() => setShowSupplierModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowSupplierModal(false)} onKeyDown={modalKeys(() => setShowSupplierModal(false), handleSaveSupplier)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>{editingSupplier ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h3>
             <div className="form-group">
@@ -408,7 +386,7 @@ export default function Purchases({ user }) {
       )}
 
       {showPurchaseModal && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" onKeyDown={modalKeys(() => setShowPurchaseModal(false), handleSavePurchase)}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <h3>Nuevo Pedido / Compra</h3>
             <div className="form-row">
@@ -438,7 +416,7 @@ export default function Purchases({ user }) {
               <button type="button" className="btn btn-sm btn-outline" onClick={handleSuggestProducts}>Sugerir productos a reponer</button>
             </div>
             <div className="product-global-search">
-              <input type="text" className="input" placeholder="Buscar producto del proveedor y agregar..." value={productSearch} onChange={e => setProductSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') setShowProductDropdown(false) }} autoFocus />
+              <input type="text" className="input" placeholder="Buscar producto del proveedor y agregar..." value={productSearch} onChange={e => setProductSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setShowProductDropdown(false) } }} autoFocus />
               {showProductDropdown && filteredProducts.length > 0 && (
                 <div className="product-dropdown">
                   {filteredProducts.map(p => (
@@ -499,7 +477,7 @@ export default function Purchases({ user }) {
       )}
 
       {showReceiveModal && receivePurchase && (
-        <div className="modal-overlay" onClick={() => setShowReceiveModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowReceiveModal(false)} onKeyDown={modalKeys(() => setShowReceiveModal(false), confirmReceivePurchase)}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <h3>Recibir Pedido #{receivePurchase.id}</h3>
             <p className="text-muted">Confirma lo que realmente llegó. Si cambió la cantidad o el precio, ajústalo aquí — el inventario y el costo del producto se actualizan con estos valores, no con lo pedido.</p>
@@ -532,7 +510,7 @@ export default function Purchases({ user }) {
       )}
 
       {showDetailModal && detailPurchase && (
-        <div className="modal-overlay" onClick={() => setShowDetailModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowDetailModal(false)} onKeyDown={modalKeys(() => setShowDetailModal(false), () => setShowDetailModal(false))}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <h3>Detalle de Compra #{detailPurchase.id}</h3>
             <div className="detail-grid">

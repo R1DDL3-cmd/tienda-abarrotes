@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { setToken, getToken, auth, accounting } from './api'
+import { setToken, getToken, auth, accounting, settings as settingsApi } from './api'
+import { applyPalette } from './theme'
 import ErrorBoundary from './components/ErrorBoundary'
+import LogoWatermark from './components/LogoWatermark'
+import { modalKeys } from './modalKeys'
 import Login from './components/Login'
 import POS from './components/POS'
 import Inventory from './components/Inventory'
@@ -99,11 +102,17 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  const loadPalette = () => {
+    settingsApi.getPalette()
+      .then(p => applyPalette({ primary: p.palette_primary, success: p.palette_success, danger: p.palette_danger, warning: p.palette_warning }))
+      .catch(() => {})
+  }
+
   useEffect(() => {
     const token = getToken()
     if (token) {
       auth.me()
-        .then((res) => setUser(res.user))
+        .then((res) => { setUser(res.user); loadPalette() })
         .catch(() => { setToken(null); setUser(null) })
         .finally(() => setLoading(false))
     } else {
@@ -114,6 +123,7 @@ export default function App() {
   const handleLogin = (token, userData) => {
     setToken(token)
     setUser(userData)
+    loadPalette()
   }
 
   const doLogout = () => {
@@ -158,20 +168,12 @@ export default function App() {
     }
   }, [showCashCount])
 
-  const handleCashCountKeyDown = useCallback((e) => {
-    if (e.key === 'Enter') handleCashCountSubmit()
-  }, [cashCountAmount, sessionToClose])
-
-  const handleLogoutKeyDown = useCallback((e) => {
-    if (e.key === 'Enter') handleLogoutConfirm()
-    if (e.key === 'Escape') setShowLogoutConfirm(false)
-  }, [])
-
   if (loading) return <div className="loading-screen"><div className="spinner"></div><p>Cargando...</p></div>
 
   return (
     <ErrorBoundary>
     <HashRouter>
+      {user && <LogoWatermark />}
       {!isOnline && (
         <div className="offline-banner">
           Sin conexión — mostrando el catálogo guardado, puede no estar al día. No se puede cobrar hasta recuperar la señal.
@@ -195,7 +197,7 @@ export default function App() {
       </Routes>
 
       {showLogoutConfirm && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Enter') { handleLogoutConfirm() } if (e.key === 'Escape') { setShowLogoutConfirm(false) } }}>
+        <div className="modal-overlay" onKeyDown={modalKeys(() => setShowLogoutConfirm(false), handleLogoutConfirm)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Cerrar Sesión</h3>
             <p>¿Seguro que deseas salir?</p>
@@ -207,7 +209,7 @@ export default function App() {
         </div>
       )}
       {showCashCount && (
-        <div className="modal-overlay" onKeyDown={handleCashCountKeyDown}>
+        <div className="modal-overlay" onKeyDown={modalKeys(null, handleCashCountSubmit)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Conteo de Caja</h3>
             <p>Ingresa el efectivo que hay en caja para cerrar el día:</p>

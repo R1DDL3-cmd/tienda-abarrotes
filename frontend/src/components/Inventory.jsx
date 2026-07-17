@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { products, accounting, suppliers as suppliersApi } from '../api'
 import { formatDateTime, formatDate, formatCalendarDate } from '../dateUtils'
 import { getTheme, toggleTheme } from '../theme'
+import { modalKeys } from '../modalKeys'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -48,6 +49,7 @@ export default function Inventory({ user, onLogout }) {
   const [obsoleteProducts, setObsoleteProducts] = useState([])
   const [obsoleteLoading, setObsoleteLoading] = useState(false)
   const [selectedObsolete, setSelectedObsolete] = useState(new Set())
+  const importExcelRef = useRef(null)
 
   const loadProducts = useCallback(async () => {
     try {
@@ -68,6 +70,25 @@ export default function Inventory({ user, onLogout }) {
   useEffect(() => { loadProducts(); const interval = setInterval(loadProducts, 30000); return () => clearInterval(interval) }, [loadProducts])
 
   useEffect(() => { loadCategories(); loadSuppliers() }, [])
+
+  const handleExportExcel = async () => {
+    try { await products.exportExcel() } catch (e) { setError(e.message) }
+  }
+
+  const handleImportExcel = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!confirm(`¿Importar "${file.name}"? Se actualizarán los productos existentes, se crearán los nuevos y se desactivará cualquier producto activo que no aparezca en el archivo.`)) {
+      e.target.value = ''
+      return
+    }
+    try {
+      const res = await products.importExcel(file)
+      setSuccess(`Importación completa: ${res.inserted} nuevos, ${res.updated} actualizados, ${res.deactivated} desactivados${res.skipped ? `, ${res.skipped} filas sin nombre omitidas` : ''}`)
+      loadProducts()
+    } catch (e) { setError(e.message) }
+    e.target.value = ''
+  }
 
   const openCategoriesModal = () => {
     loadCategories()
@@ -353,6 +374,9 @@ export default function Inventory({ user, onLogout }) {
             </button>
           )}
           <button className="btn btn-sm btn-outline" onClick={openCategoriesModal}>Categorías</button>
+          <button className="btn btn-sm btn-outline" onClick={handleExportExcel}>Exportar Excel</button>
+          <button className="btn btn-sm btn-outline" onClick={() => importExcelRef.current?.click()}>Importar Excel</button>
+          <input ref={importExcelRef} type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleImportExcel} />
           {isStandalone && (
             <>
               <button className="btn btn-sm btn-outline" onClick={() => setThemeState(toggleTheme())} title={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}>
@@ -434,7 +458,7 @@ export default function Inventory({ user, onLogout }) {
       </section>
 
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <div className="modal-overlay" onClick={() => setShowForm(false)} onKeyDown={modalKeys(() => { setShowForm(false); setError('') }, handleSave)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>{editingProduct ? 'Editar Producto' : 'Nuevo Producto'}</h3>
             <div className="form-grid">
@@ -514,7 +538,7 @@ export default function Inventory({ user, onLogout }) {
       )}
 
       {kardexProduct && (
-        <div className="modal-overlay" onClick={() => setKardexProduct(null)}>
+        <div className="modal-overlay" onClick={() => setKardexProduct(null)} onKeyDown={modalKeys(() => setKardexProduct(null), () => setKardexProduct(null))}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <h3>Kardex: {kardexProduct.name}</h3>
             <p>Stock actual: {kardexProduct.stock}</p>
@@ -547,7 +571,7 @@ export default function Inventory({ user, onLogout }) {
       )}
 
       {batchProduct && (
-        <div className="modal-overlay" onClick={() => setBatchProduct(null)}>
+        <div className="modal-overlay" onClick={() => setBatchProduct(null)} onKeyDown={modalKeys(() => setBatchProduct(null), null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>Lotes: {batchProduct.name}</h3>
             <div className="form-inline">
@@ -582,7 +606,7 @@ export default function Inventory({ user, onLogout }) {
       )}
 
       {barcodeProduct && (
-        <div className="modal-overlay" onClick={() => setBarcodeProduct(null)}>
+        <div className="modal-overlay" onClick={() => setBarcodeProduct(null)} onKeyDown={modalKeys(() => { setBarcodeProduct(null); setError('') }, null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>Códigos de Barras: {barcodeProduct.name}</h3>
             <p className="text-muted">Código principal: <strong>{barcodeProduct.barcode || '-'}</strong>. Agrega aquí códigos adicionales (otras presentaciones, báscula, etc.) que deban reconocer el mismo producto al escanear.</p>
@@ -615,7 +639,7 @@ export default function Inventory({ user, onLogout }) {
       )}
 
       {showObsoleteModal && (
-        <div className="modal-overlay" onClick={() => setShowObsoleteModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowObsoleteModal(false)} onKeyDown={modalKeys(() => setShowObsoleteModal(false), null)}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Inventario Obsoleto</h3>
@@ -659,7 +683,7 @@ export default function Inventory({ user, onLogout }) {
       )}
 
       {showWasteModal && (
-        <div className="modal-overlay" onClick={() => setShowWasteModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowWasteModal(false)} onKeyDown={modalKeys(() => { setShowWasteModal(false); setError('') }, handleWasteSubmit)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>Registrar Merma</h3>
             <div className="form-group">
@@ -702,7 +726,7 @@ export default function Inventory({ user, onLogout }) {
       )}
 
       {showCategoriesModal && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') setShowCategoriesModal(false) }}>
+        <div className="modal-overlay" onClick={() => setShowCategoriesModal(false)} onKeyDown={modalKeys(() => setShowCategoriesModal(false), handleCreateCategory)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Categorías</h3>
@@ -710,7 +734,7 @@ export default function Inventory({ user, onLogout }) {
             </div>
             <div className="modal-body">
               <div className="form-group" style={{display:'flex', gap:'0.5rem'}}>
-                <input type="text" className="input-lg" placeholder="Nombre de categoría" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCategory() }} autoFocus />
+                <input type="text" className="input-lg" placeholder="Nombre de categoría" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} autoFocus />
                 <button className="btn btn-primary" onClick={handleCreateCategory} tabIndex="0">{editingCategory ? 'Actualizar' : 'Agregar'}</button>
               </div>
               <div className="table-responsive" style={{marginTop:'1rem'}}>
@@ -739,7 +763,7 @@ export default function Inventory({ user, onLogout }) {
       )}
 
       {showWasteList && (
-        <div className="modal-overlay" onClick={() => setShowWasteList(false)}>
+        <div className="modal-overlay" onClick={() => setShowWasteList(false)} onKeyDown={modalKeys(() => setShowWasteList(false), () => setShowWasteList(false))}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Historial de Mermas y Devoluciones</h3>

@@ -65,6 +65,27 @@ function registerZoomShortcuts(win) {
   });
 }
 
+// El ticket de venta y el de pedido a proveedor se abren con window.open() (ver
+// POS.jsx/Purchases.jsx), que Electron convierte en una BrowserWindow real, y ahí
+// dentro se llama a window.print() para el diálogo nativo de impresión de Windows.
+// Al cerrarse ese diálogo o la ventana emergente, el enrutamiento de eventos de
+// teclado de Chromium en la ventana principal se queda desincronizado: la ventana
+// se ve enfocada pero deja de recibir keydown, y solo un foco a nivel de SO
+// (minimizar/restaurar) lo repara — patrón conocido de Electron con ventanas hijas
+// + diálogos nativos. Forzar un ciclo blur/focus al cerrarse la ventana hija
+// resincroniza el input sin que el usuario tenga que hacerlo a mano.
+function registerChildWindowFocusFix(win) {
+  win.webContents.on('did-create-window', (childWindow) => {
+    childWindow.on('closed', () => {
+      if (win && !win.isDestroyed()) {
+        win.blur();
+        win.focus();
+        win.webContents.focus();
+      }
+    });
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1024,
@@ -86,6 +107,7 @@ function createWindow() {
   const url = `http://localhost:${port}`;
 
   registerZoomShortcuts(mainWindow);
+  registerChildWindowFocusFix(mainWindow);
   mainWindow.loadURL(url);
 
   mainWindow.once('ready-to-show', () => {

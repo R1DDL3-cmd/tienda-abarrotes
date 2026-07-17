@@ -1,8 +1,22 @@
 const express = require('express');
+const XLSX = require('xlsx');
 const { getDB } = require('../db');
 const { authMiddleware, inventoryAdminMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
+
+function unitTypeToLabel(u) {
+  if (u === 'kg') return 'Kg';
+  if (u === 'l') return 'Litro';
+  return 'Pieza';
+}
+
+function labelToUnitType(v) {
+  const val = String(v || '').trim().toLowerCase();
+  if (['kg', 'kilo', 'kilos', 'kls', 'kls.'].includes(val)) return 'kg';
+  if (['l', 'lt', 'lt.', 'litro', 'litros', 'ml', 'ml.'].includes(val)) return 'l';
+  return 'unit';
+}
 
 router.get('/', authMiddleware, (req, res) => {
   const db = getDB();
@@ -490,6 +504,143 @@ router.get('/kardex/:productId', authMiddleware, (req, res) => {
   ).all(req.params.productId, limit, offset);
 
   res.json({ movements, total: countResult.total, page, limit });
+});
+
+router.get('/export-excel', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  try {
+    const db = getDB();
+    const list = db.prepare(
+      `SELECT p.*, COALESCE(c.name, p.category_name) as category_name
+       FROM products p LEFT JOIN categories c ON p.category_id = c.id
+       ORDER BY p.name ASC`
+    ).all();
+
+    const rows = list.map(p => ({
+      'Código de Barras': p.barcode || '',
+      'Nombre': p.name,
+      'Categoría': p.category_name || '',
+      'Precio Compra': p.purchase_price || 0,
+      'Precio Venta': p.sale_price || 0,
+      'Stock': p.stock || 0,
+      'Stock Mínimo': p.min_stock || 0,
+      'Proveedor': p.supplier || '',
+      'Tipo Unidad': unitTypeToLabel(p.unit_type),
+      'Activo': p.active ? 'Sí' : 'No',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="inventario_${dateStr}.xlsx"`);
+    res.send(buffer);
+  } catch (e) {
+    res.status(500).json({ error: 'Error al exportar inventario: ' + e.message });
+  }
+});
+
+// Formato propio (encabezados en español, por nombre de columna) pensado para
+// ida y vuelta con /export-excel — no confundir con scripts/import_excel.js,
+// que lee por posición de columna el formato del sistema anterior de la
+// tienda y solo se usa una vez, para la migración inicial.
+router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const { fileBase64 } = req.body;
+  if (!fileBase64) return res.status(400).json({ error: 'Archivo requerido' });
+
+  let rows;
+  try {
+    const buffer = Buffer.from(fileBase64, 'base64');
+    const wb = XLSX.read(buffer, { type: 'buffer' });
+    const sheetName = wb.SheetNames.includes('Inventario') ? 'Inventario' : wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
+    if (!ws) return res.status(400).json({ error: 'El archivo no tiene hojas' });
+    rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  } catch (e) {
+    return res.status(400).json({ error: 'No se pudo leer el archivo Excel: ' + e.message });
+  }
+
+  const db = getDB();
+  let inserted = 0, updated = 0, deactivated = 0, skipped = 0;
+
+  const transaction = db.transaction(() => {
+    const seenBarcodes = new Set();
+    const categoryCache = {};
+
+    function resolveCategory(name) {
+      const trimmed = (name || '').toString().trim();
+      if (!trimmed) return { id: null, name: null };
+      if (categoryCache[trimmed]) return categoryCache[trimmed];
+      let cat = db.prepare('SELECT id FROM categories WHERE name = ?').get(trimmed);
+      if (!cat) {
+        const result = db.prepare('INSERT INTO categories (name) VALUES (?)').run(trimmed);
+        cat = { id: result.lastInsertRowid };
+      }
+      const resolved = { id: cat.id, name: trimmed };
+      categoryCache[trimmed] = resolved;
+      return resolved;
+    }
+
+    for (const row of rows) {
+      const name = String(row['Nombre'] ?? '').trim();
+      if (!name) { skipped++; continue; }
+
+      let barcode = String(row['Código de Barras'] ?? '').trim();
+      if (!barcode) {
+        barcode = 'BAR-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase();
+      }
+
+      const category = resolveCategory(row['Categoría']);
+      const purchasePrice = parseFloat(row['Precio Compra']) || 0;
+      const salePrice = parseFloat(row['Precio Venta']) || 0;
+      const stock = parseFloat(row['Stock']) || 0;
+      const minStock = parseFloat(row['Stock Mínimo']) || 0;
+      const supplier = String(row['Proveedor'] ?? '').trim() || null;
+      const unitType = labelToUnitType(row['Tipo Unidad']);
+      const activeVal = String(row['Activo'] ?? 'Sí').trim().toLowerCase();
+      const active = (activeVal === 'no' || activeVal === '0' || activeVal === 'false') ? 0 : 1;
+
+      seenBarcodes.add(barcode);
+
+      const existing = db.prepare('SELECT id FROM products WHERE barcode = ?').get(barcode);
+      if (existing) {
+        db.prepare(
+          `UPDATE products SET name=?, category_id=?, category_name=?, purchase_price=?, sale_price=?, stock=?, min_stock=?, supplier=?, unit_type=?, active=?, updated_at=datetime('now') WHERE id=?`
+        ).run(name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active, existing.id);
+        updated++;
+      } else {
+        db.prepare(
+          `INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, unit_type, active) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+        ).run(barcode, name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active);
+        inserted++;
+      }
+    }
+
+    // Cualquier producto activo con código de barras que no haya aparecido en
+    // el archivo se desactiva (nunca se borra) — el Excel importado se trata
+    // como la fuente de verdad del catálogo activo. Los productos sin código
+    // de barras en la BD quedan fuera de esta reconciliación porque no hay
+    // forma confiable de saber si "no aparecieron" o simplemente nunca
+    // tuvieron uno que exportar.
+    const activeWithBarcode = db.prepare("SELECT id, barcode FROM products WHERE active = 1 AND barcode IS NOT NULL AND barcode != ''").all();
+    const deactivateStmt = db.prepare('UPDATE products SET active = 0, updated_at = datetime(\'now\') WHERE id = ?');
+    for (const p of activeWithBarcode) {
+      if (!seenBarcodes.has(p.barcode)) {
+        deactivateStmt.run(p.id);
+        deactivated++;
+      }
+    }
+  });
+
+  try {
+    transaction();
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al importar: ' + e.message });
+  }
+
+  res.json({ inserted, updated, deactivated, skipped });
 });
 
 module.exports = router;

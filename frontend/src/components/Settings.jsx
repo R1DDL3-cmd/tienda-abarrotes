@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { auth, backup, settings as settingsApi } from '../api'
 import { formatDate, formatDateTime } from '../dateUtils'
-import { getTheme, setTheme } from '../theme'
+import { getTheme, setTheme, applyPalette, clearPalette } from '../theme'
 import { getShortcuts, setShortcutKey, resetShortcuts, eventToKeyString, DEFAULT_SHORTCUTS } from '../shortcuts'
+import { modalKeys } from '../modalKeys'
 import { getManualOffsetHours, setManualOffsetHours } from '../dateUtils'
 
 function formatMoney(n) {
@@ -25,7 +26,8 @@ export default function Settings({ user }) {
   const [securityPinForm, setSecurityPinForm] = useState('')
   const [backupPath, setBackupPath] = useState('')
   const importFileRef = useRef(null)
-  const [storeForm, setStoreForm] = useState({ store_name: '', store_address: '', store_phone: '', ticket_footer: '' })
+  const [storeForm, setStoreForm] = useState({ store_name: '', store_address: '', store_phone: '', ticket_footer: '', store_logo: '' })
+  const logoInputRef = useRef(null)
   const [theme, setThemeState] = useState(getTheme())
   const [shortcuts, setShortcutsState] = useState(getShortcuts())
   const [capturingShortcut, setCapturingShortcut] = useState(null)
@@ -35,6 +37,51 @@ export default function Settings({ user }) {
   const handleThemeChange = (value) => {
     setTheme(value)
     setThemeState(value)
+  }
+
+  const [palette, setPaletteState] = useState({ primary: '', success: '', danger: '', warning: '' })
+
+  useEffect(() => {
+    if (tab === 'appearance') {
+      settingsApi.getPalette().then(p => setPaletteState({
+        primary: p.palette_primary || '',
+        success: p.palette_success || '',
+        danger: p.palette_danger || '',
+        warning: p.palette_warning || ''
+      })).catch(() => {})
+    }
+  }, [tab])
+
+  const cssVar = (name) => (typeof window !== 'undefined' ? getComputedStyle(document.documentElement).getPropertyValue(name).trim() : '') || '#000000'
+
+  const handlePaletteChange = (key, value) => {
+    const next = { ...palette, [key]: value }
+    setPaletteState(next)
+    applyPalette(next)
+  }
+
+  const handleSavePalette = async () => {
+    try {
+      await settingsApi.updatePalette({
+        palette_primary: palette.primary,
+        palette_success: palette.success,
+        palette_danger: palette.danger,
+        palette_warning: palette.warning
+      })
+      setSuccess('Colores de marca guardados')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
+  }
+
+  const handleResetPalette = async () => {
+    const empty = { primary: '', success: '', danger: '', warning: '' }
+    setPaletteState(empty)
+    clearPalette()
+    try {
+      await settingsApi.updatePalette({ palette_primary: '', palette_success: '', palette_danger: '', palette_warning: '' })
+      setSuccess('Colores restablecidos')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
   }
 
   // Captura la siguiente tecla presionada (F1-F12, o Ctrl+letra) para
@@ -150,10 +197,47 @@ export default function Settings({ user }) {
   const handleSaveStore = async () => {
     try {
       await settingsApi.updateStore(storeForm)
+      window.dispatchEvent(new CustomEvent('store-updated', { detail: storeForm }))
       setSuccess('Datos de la tienda actualizados')
       setTimeout(() => setSuccess(''), 3000)
     } catch (e) { setError(e.message) }
   }
+
+  // Redimensiona/recomprime la imagen en un <canvas> antes de convertirla a
+  // base64: cada guardado de la app reescribe el archivo completo de la base
+  // de datos (server/db.js, debouncedSave), así que un logo sin comprimir de
+  // varios MB volvería más lento *cada* guardado de la app, no solo el del
+  // logo. 300px de lado es de sobra para el tamaño en el que se muestra.
+  const handleLogoFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) { setError('El archivo debe ser una imagen'); e.target.value = ''; return }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const maxSize = 300
+        let { width, height } = img
+        if (width > height) {
+          if (width > maxSize) { height = Math.round(height * (maxSize / width)); width = maxSize }
+        } else if (height > maxSize) {
+          width = Math.round(width * (maxSize / height)); height = maxSize
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+        setStoreForm(f => ({ ...f, store_logo: canvas.toDataURL('image/png') }))
+      }
+      img.onerror = () => setError('No se pudo leer la imagen')
+      img.src = reader.result
+    }
+    reader.onerror = () => setError('Error al leer el archivo')
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
+  const handleRemoveLogo = () => setStoreForm(f => ({ ...f, store_logo: '' }))
 
   const handleSaveSecurityPin = () => {
     if (!securityPinForm || securityPinForm.length < 4) { setError('El codigo debe tener al menos 4 caracteres'); return }
@@ -263,6 +347,24 @@ export default function Settings({ user }) {
             <label>Mensaje al pie del ticket</label>
             <input type="text" value={storeForm.ticket_footer} onChange={e => setStoreForm({...storeForm, ticket_footer: e.target.value})} />
           </div>
+          <div className="form-group">
+            <label>Logo de la tienda</label>
+            <p style={{fontSize:'0.8rem', color:'var(--text-muted)', margin:'0 0 0.5rem 0'}}>
+              Aparece de fondo (pálido) en el sistema y en los tickets impresos.
+            </p>
+            <div style={{display:'flex', alignItems:'center', gap:'0.75rem'}}>
+              {storeForm.store_logo && (
+                <img src={storeForm.store_logo} alt="Logo" style={{width:'56px', height:'56px', objectFit:'contain', background:'var(--bg)', borderRadius:'var(--radius-sm)', border:'1px solid var(--border)'}} />
+              )}
+              <button type="button" className="btn btn-sm btn-outline" onClick={() => logoInputRef.current?.click()}>
+                {storeForm.store_logo ? 'Cambiar Logo' : 'Subir Logo'}
+              </button>
+              {storeForm.store_logo && (
+                <button type="button" className="btn btn-sm btn-outline" onClick={handleRemoveLogo}>Quitar</button>
+              )}
+              <input ref={logoInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleLogoFile} />
+            </div>
+          </div>
           <div className="modal-actions" style={{padding:0, marginTop:'1rem'}}>
             <button className="btn btn-primary" onClick={handleSaveStore}>Guardar</button>
           </div>
@@ -290,6 +392,33 @@ export default function Settings({ user }) {
             >
               🌙 Oscuro
             </button>
+          </div>
+
+          <h3 style={{marginTop:'1.5rem'}}>Colores de Marca</h3>
+          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
+            Se aplican en toda la app (botones, encabezados, alertas) para todos los usuarios.
+          </p>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.75rem'}}>
+            <div className="form-group">
+              <label>Primario</label>
+              <input type="color" className="input" value={palette.primary || cssVar('--primary')} onChange={e => handlePaletteChange('primary', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Éxito</label>
+              <input type="color" className="input" value={palette.success || cssVar('--success')} onChange={e => handlePaletteChange('success', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Peligro</label>
+              <input type="color" className="input" value={palette.danger || cssVar('--danger')} onChange={e => handlePaletteChange('danger', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Advertencia</label>
+              <input type="color" className="input" value={palette.warning || cssVar('--warning')} onChange={e => handlePaletteChange('warning', e.target.value)} />
+            </div>
+          </div>
+          <div className="modal-actions" style={{padding:0, marginTop:'1rem', justifyContent:'flex-start'}}>
+            <button className="btn btn-primary" onClick={handleSavePalette}>Guardar Colores</button>
+            <button className="btn btn-secondary" onClick={handleResetPalette}>Restablecer</button>
           </div>
         </div>
       )}
@@ -467,7 +596,7 @@ export default function Settings({ user }) {
       )}
 
       {showUserForm && (
-        <div className="modal-overlay" onClick={() => setShowUserForm(false)}>
+        <div className="modal-overlay" onClick={() => setShowUserForm(false)} onKeyDown={modalKeys(() => setShowUserForm(false), handleSaveUser)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>{editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}</h3>
             <div className="form-group">
@@ -500,7 +629,7 @@ export default function Settings({ user }) {
       )}
 
       {restoreConfirm && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" onClick={() => setRestoreConfirm(null)} onKeyDown={modalKeys(() => setRestoreConfirm(null), handleRestoreConfirm)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Restaurar Respaldo</h3>
             <p>{restoreConfirm.message}</p>

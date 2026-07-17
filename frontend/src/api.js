@@ -126,6 +126,39 @@ export const products = {
   obsolete: (days) => request(`/products/obsolete${days ? `?days=${days}` : ''}`),
   getObsoleteSettings: () => request('/products/obsolete/settings'),
   setObsoleteSettings: (days) => request('/products/obsolete/settings', { method: 'PUT', body: JSON.stringify({ days }) }),
+  exportExcel: async () => {
+    const token = authToken;
+    const res = await fetch(`${API_BASE}/products/export-excel`, {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+    });
+    if (!res.ok) throw new Error('Error al exportar inventario');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `inventario_${new Date().toISOString().split('T')[0]}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  importExcel: async (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result.split(',')[1];
+        try {
+          const result = await request('/products/import-excel', {
+            method: 'POST',
+            body: JSON.stringify({ fileBase64: base64 })
+          });
+          resolve(result);
+        } catch (e) {
+          reject(e);
+        }
+      };
+      reader.onerror = () => reject(new Error('Error al leer el archivo'));
+      reader.readAsDataURL(file);
+    });
+  },
 };
 
 export const sales = {
@@ -277,4 +310,6 @@ export const purchases = {
 export const settings = {
   getStore: () => request('/settings/store'),
   updateStore: (data) => request('/settings/store', { method: 'PUT', body: JSON.stringify(data) }),
+  getPalette: () => request('/settings/palette'),
+  updatePalette: (data) => request('/settings/palette', { method: 'PUT', body: JSON.stringify(data) }),
 };

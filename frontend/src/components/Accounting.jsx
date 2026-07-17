@@ -3,6 +3,7 @@ import { accounting, sales } from '../api'
 import { formatDateTime, formatDate, isSameLocalDay } from '../dateUtils'
 import Events from './Events'
 import PredictionsTab from './PredictionsTab'
+import { modalKeys } from '../modalKeys'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -364,7 +365,7 @@ export default function Accounting({ user, onLogout }) {
           </div>
 
           {showExpenseForm && (
-            <div className="modal-overlay" onClick={() => setShowExpenseForm(false)}>
+            <div className="modal-overlay" onClick={() => setShowExpenseForm(false)} onKeyDown={modalKeys(() => setShowExpenseForm(false), handleAddExpense)}>
               <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
                 <h3>Nuevo Gasto</h3>
                 <div className="form-group">
