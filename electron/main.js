@@ -2,6 +2,26 @@ const { app, BrowserWindow, Tray, Menu, nativeImage, Notification, ipcMain } = r
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
+// Sin esto, cada vez que se vuelve a abrir el .exe se arranca una instancia
+// completamente nueva (con su propio servidor Express escuchando en el
+// siguiente puerto libre), sin enterarse de que ya hay una corriendo — y como
+// cerrar la ventana solo la esconde a la bandeja (ver mainWindow.on('close')
+// abajo), los relanzamientos se acumulan en vez de reemplazarse. Si esta
+// instancia pierde la carrera por el lock, significa que ya hay otra
+// corriendo: se cierra de inmediato en vez de arrancar un servidor más.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 let mainWindow;
 let tray;
 let serverReady = false;

@@ -1095,7 +1095,7 @@ export default function POS({ user, onLogout }) {
         </div>
       )}
       {showEndDayModal && (
-        <div className="modal-overlay" onClick={() => setShowEndDayModal(false)} onKeyDown={modalKeys(() => setShowEndDayModal(false), handleEndDaySubmit)}>
+        <div className="modal-overlay" onKeyDown={modalKeys(null, handleEndDaySubmit)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Cerrar Día</h3>
             <p>¿Cuánto dinero hay en caja al cierre del día?</p>
@@ -1111,7 +1111,7 @@ export default function POS({ user, onLogout }) {
         </div>
       )}
       {showCashCountModal && (
-        <div className="modal-overlay" onClick={() => setShowCashCountModal(false)} onKeyDown={modalKeys(() => setShowCashCountModal(false), handleCashCountSubmit)}>
+        <div className="modal-overlay" onKeyDown={modalKeys(null, handleCashCountSubmit)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <h3>Conteo de Caja</h3>
             <p>Ingresa el efectivo que hay en caja para cerrar el día:</p>

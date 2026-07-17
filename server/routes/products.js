@@ -542,22 +542,68 @@ router.get('/export-excel', authMiddleware, inventoryAdminMiddleware, (req, res)
   }
 });
 
-// Formato propio (encabezados en español, por nombre de columna) pensado para
-// ida y vuelta con /export-excel — no confundir con scripts/import_excel.js,
-// que lee por posición de columna el formato del sistema anterior de la
-// tienda y solo se usa una vez, para la migración inicial.
+// Dos formatos reconocidos:
+//  - Propio (encabezados en español por nombre de columna: "Nombre", "Código
+//    de Barras", etc.), pensado para ida y vuelta con /export-excel.
+//  - El del sistema anterior de la tienda (hoja "Articulos", columnas por
+//    posición: ARTÍCULO, DESCRIPCIÓN, LINEA...), que es el que de verdad usa
+//    la tienda para sus exports periódicos de inventario — mismo layout que
+//    lee scripts/import_excel.js. Se detecta por el encabezado y ambos
+//    terminan en la misma fila normalizada para compartir el resto de la
+//    lógica (upsert, categorías, desactivación).
+function normalizeLegacyRow(row) {
+  const blocked = parseInt(row[16]) || 0;
+  return {
+    barcode: (row[0] || '').toString().trim(),
+    name: (row[1] || '').toString().trim(),
+    categoryName: (row[2] || '').toString().trim(),
+    salePrice: parseFloat(row[4]) || 0,
+    purchasePrice: parseFloat(row[7]) || 0,
+    unitTypeRaw: row[9],
+    minStock: parseFloat(row[10]) || 0,
+    supplier: (row[17] || '').toString().trim(),
+    stock: parseFloat(row[22]) || 0,
+    active: blocked === 1 ? 0 : 1
+  };
+}
+
+function normalizeOwnRow(row) {
+  const activeVal = String(row['Activo'] ?? 'Sí').trim().toLowerCase();
+  return {
+    barcode: String(row['Código de Barras'] ?? '').trim(),
+    name: String(row['Nombre'] ?? '').trim(),
+    categoryName: String(row['Categoría'] ?? '').trim(),
+    salePrice: parseFloat(row['Precio Venta']) || 0,
+    purchasePrice: parseFloat(row['Precio Compra']) || 0,
+    unitTypeRaw: row['Tipo Unidad'],
+    minStock: parseFloat(row['Stock Mínimo']) || 0,
+    supplier: String(row['Proveedor'] ?? '').trim(),
+    stock: parseFloat(row['Stock']) || 0,
+    active: (activeVal === 'no' || activeVal === '0' || activeVal === 'false') ? 0 : 1
+  };
+}
+
 router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res) => {
   const { fileBase64 } = req.body;
   if (!fileBase64) return res.status(400).json({ error: 'Archivo requerido' });
 
-  let rows;
+  let normalizedRows;
   try {
     const buffer = Buffer.from(fileBase64, 'base64');
     const wb = XLSX.read(buffer, { type: 'buffer' });
     const sheetName = wb.SheetNames.includes('Inventario') ? 'Inventario' : wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
     if (!ws) return res.status(400).json({ error: 'El archivo no tiene hojas' });
-    rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const headerRow = (rawRows[0] || []).map(h => String(h).trim().toUpperCase());
+    const isLegacyFormat = headerRow.includes('ARTÍCULO') || headerRow.includes('ARTICULO') || headerRow.includes('DESCRIPCIÓN') || headerRow.includes('DESCRIPCION');
+
+    if (isLegacyFormat) {
+      normalizedRows = rawRows.slice(1).filter(r => r[0] || r[1]).map(normalizeLegacyRow);
+    } else {
+      normalizedRows = XLSX.utils.sheet_to_json(ws, { defval: '' }).map(normalizeOwnRow);
+    }
   } catch (e) {
     return res.status(400).json({ error: 'No se pudo leer el archivo Excel: ' + e.message });
   }
@@ -583,24 +629,23 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
       return resolved;
     }
 
-    for (const row of rows) {
-      const name = String(row['Nombre'] ?? '').trim();
+    for (const row of normalizedRows) {
+      const name = row.name;
       if (!name) { skipped++; continue; }
 
-      let barcode = String(row['Código de Barras'] ?? '').trim();
+      let barcode = row.barcode;
       if (!barcode) {
         barcode = 'BAR-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase();
       }
 
-      const category = resolveCategory(row['Categoría']);
-      const purchasePrice = parseFloat(row['Precio Compra']) || 0;
-      const salePrice = parseFloat(row['Precio Venta']) || 0;
-      const stock = parseFloat(row['Stock']) || 0;
-      const minStock = parseFloat(row['Stock Mínimo']) || 0;
-      const supplier = String(row['Proveedor'] ?? '').trim() || null;
-      const unitType = labelToUnitType(row['Tipo Unidad']);
-      const activeVal = String(row['Activo'] ?? 'Sí').trim().toLowerCase();
-      const active = (activeVal === 'no' || activeVal === '0' || activeVal === 'false') ? 0 : 1;
+      const category = resolveCategory(row.categoryName);
+      const purchasePrice = row.purchasePrice;
+      const salePrice = row.salePrice;
+      const stock = row.stock;
+      const minStock = row.minStock;
+      const supplier = row.supplier || null;
+      const unitType = labelToUnitType(row.unitTypeRaw);
+      const active = row.active;
 
       seenBarcodes.add(barcode);
 
@@ -616,6 +661,16 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
         ).run(barcode, name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active);
         inserted++;
       }
+    }
+
+    // Si no se reconoció ni una sola fila (formato de archivo no soportado,
+    // hoja vacía, etc.) NUNCA se debe desactivar nada — de lo contrario un
+    // archivo que no se pudo leer se interpreta como "el inventario está
+    // vacío" y borra de un plumazo el catálogo activo completo. Esto pasó de
+    // verdad: un archivo con encabezados no reconocidos desactivó los 222
+    // productos de la tienda porque ninguna fila "apareció" en el archivo.
+    if (inserted === 0 && updated === 0) {
+      throw new Error('No se reconoció ninguna fila del archivo. Revisa que sea un Excel de inventario válido (o que la hoja no esté vacía) — no se modificó nada.');
     }
 
     // Cualquier producto activo con código de barras que no haya aparecido en
