@@ -1,0 +1,14 @@
+# Sin esto, git trata estos archivos como texto y les aplica su conversión
+# normal de fin de línea (LF<->CRLF) al hacer commit/checkout — que para un
+# binario significa corromperlo en cualquier máquina con una configuración de
+# autocrlf distinta a la de quien lo comiteó por primera vez.
+*.pdf binary
+*.xlsx binary
+*.xls binary
+*.db binary
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.exe binary
+*.blockmap binary
