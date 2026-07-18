@@ -85,7 +85,7 @@ export default function Inventory({ user, onLogout }) {
     }
     try {
       const res = await products.importExcel(file)
-      setSuccess(`Importación completa: ${res.inserted} nuevos, ${res.updated} actualizados, ${res.deactivated} desactivados${res.skipped ? `, ${res.skipped} filas sin nombre omitidas` : ''}`)
+      setSuccess(`Importación completa: ${res.inserted} nuevos, ${res.updated} actualizados, ${res.deactivated} desactivados${res.skipped ? `, ${res.skipped} filas sin nombre omitidas` : ''}${res.needsReview ? `. ${res.needsReview} producto(s) quedaron con datos incompletos — aparecen hasta arriba de la lista para completarlos.` : ''}`)
       loadProducts()
     } catch (e) { setError(e.message) }
     e.target.value = ''
@@ -427,7 +427,14 @@ export default function Inventory({ user, onLogout }) {
                 {productList.map(p => (
                   <tr key={p.id} className={p.stock <= p.min_stock ? 'row-warning' : ''}>
                     <td style={{fontSize:'0.8rem'}}>{p.barcode || '-'}</td>
-                    <td><strong>{p.name}</strong></td>
+                    <td>
+                      <strong>{p.name}</strong>
+                      {!!p.needs_review && (
+                        <span className="badge badge-warning" style={{marginLeft:'0.4rem'}} title="Le faltó algún dato al importarlo (precio y/o categoría) — edítalo y guarda para quitar este aviso">
+                          Faltan datos
+                        </span>
+                      )}
+                    </td>
                     <td>{p.category_name || '-'}</td>
                     <td>{formatMoney(p.purchase_price)}</td>
                     <td>{formatMoney(p.sale_price)}</td>

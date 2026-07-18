@@ -642,6 +642,14 @@ const SCHEMA_MIGRATIONS = [
     try { db.exec('ALTER TABLE expenses ADD COLUMN reference_type TEXT'); } catch (e) {}
     try { db.exec('ALTER TABLE expenses ADD COLUMN reference_id INTEGER'); } catch (e) {}
   },
+  // v11: marca productos importados de un Excel con formato desconocido a
+  // los que les faltó algún dato crítico (precio, categoría...) — se crean
+  // igual (mejor tenerlos incompletos que no tenerlos) pero se listan hasta
+  // arriba del inventario para que se completen a mano. Se limpia sola en
+  // cuanto alguien edita y guarda el producto.
+  (db) => {
+    try { db.exec('ALTER TABLE products ADD COLUMN needs_review INTEGER DEFAULT 0'); } catch (e) {}
+  },
 ];
 
 function getSchemaVersion(db) {

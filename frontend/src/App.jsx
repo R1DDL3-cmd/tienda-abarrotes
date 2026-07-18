@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { setToken, getToken, auth, accounting, settings as settingsApi } from './api'
 import { applyPalette } from './theme'
+import { confirmDialog } from './confirmDialog'
 import ErrorBoundary from './components/ErrorBoundary'
 import LogoWatermark from './components/LogoWatermark'
 import ConfirmDialogHost from './components/ConfirmDialogHost'
@@ -35,6 +36,7 @@ export default function App() {
   const [showCashCount, setShowCashCount] = useState(false)
   const [cashCountAmount, setCashCountAmount] = useState('')
   const [sessionToClose, setSessionToClose] = useState(null)
+  const [registerForClose, setRegisterForClose] = useState(null)
   const [error, setError] = useState('')
   const [isOnline, setIsOnline] = useState(true)
 
@@ -144,6 +146,7 @@ export default function App() {
         setSessionToClose(res.session)
         setCashCountAmount('')
         setShowCashCount(true)
+        accounting.cashRegister().then(setRegisterForClose).catch(() => setRegisterForClose(null))
       } else {
         doLogout()
       }
@@ -152,10 +155,23 @@ export default function App() {
     }
   }
 
+  // El efectivo esperado se calcula igual que en el backend (server/routes/
+  // accounting.js): apertura + ventas - gastos. Si lo que se cuenta en caja
+  // se aleja mucho de eso, se pide confirmar antes de guardarlo — antes se
+  // aceptaba cualquier monto (incluido $0 con efectivo real en caja) sin
+  // ningún aviso, lo que podía esconder un faltante real o un error de captura.
   const handleCashCountSubmit = async () => {
+    const amount = parseFloat(cashCountAmount) || 0
+    if (registerForClose) {
+      const expected = parseFloat(registerForClose.opening_amount || 0) + parseFloat(registerForClose.totalSales || 0) - parseFloat(registerForClose.totalExpenses || 0)
+      if (Math.abs(amount - expected) > 1) {
+        const proceed = await confirmDialog(`El efectivo esperado en caja es ${formatMoney(expected)}, pero ingresaste ${formatMoney(amount)} (diferencia de ${formatMoney(amount - expected)}). ¿Confirmas que ese es el efectivo real contado?`)
+        if (!proceed) return
+      }
+    }
     try {
       if (sessionToClose) {
-        try { await accounting.closeSession(sessionToClose.id, { closing_amount: parseFloat(cashCountAmount) || 0 }) } catch (e) { setError(e.message) }
+        try { await accounting.closeSession(sessionToClose.id, { closing_amount: amount }) } catch (e) { setError(e.message) }
       }
     } catch (_) {}
     setShowCashCount(false)

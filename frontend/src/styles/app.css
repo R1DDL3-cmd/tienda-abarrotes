@@ -340,6 +340,14 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   align-items: center; justify-content: center; z-index: 1000; padding: 1rem;
   backdrop-filter: blur(2px);
 }
+/* ConfirmDialogHost puede abrirse desde DENTRO de un modal ya abierto (ej.
+   confirmar el monto al cerrar caja, que se dispara desde el modal "Cerrar
+   Día"). Con el mismo z-index que .modal-overlay, cuál queda encima depende
+   del orden en el DOM — y el que se abrió primero solía ganar, dejando el
+   diálogo de confirmación visible en el texto pero inalcanzable al clic. */
+.confirm-dialog-overlay {
+  z-index: 2000;
+}
 .modal {
   background: var(--bg-card); border-radius: var(--radius-lg); padding: 1.5rem;
   max-height: 90vh; overflow-y: auto; width: 100%; max-width: 520px;

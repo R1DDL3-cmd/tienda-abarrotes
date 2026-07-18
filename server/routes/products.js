@@ -48,11 +48,11 @@ router.get('/', authMiddleware, (req, res) => {
   const total = countResult.total;
 
   const products = db.prepare(
-    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name 
-     FROM products p 
-     LEFT JOIN categories c ON p.category_id = c.id 
-     ${where} 
-     ORDER BY p.name ASC 
+    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name
+     FROM products p
+     LEFT JOIN categories c ON p.category_id = c.id
+     ${where}
+     ORDER BY p.needs_review DESC, p.name ASC
      LIMIT ? OFFSET ?`
   ).all(...params, limit, offset);
 
@@ -281,9 +281,12 @@ router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
     if (cat) categoryName = cat.name;
   }
 
+  // Editar y guardar el producto es justo la señal de que alguien ya revisó
+  // sus datos — se le quita la marca de "faltan datos" (needs_review) que
+  // pudo haberle puesto un import de formato desconocido (ver /import-excel).
   db.prepare(
     `UPDATE products SET name = ?, barcode = ?, category_id = ?, category_name = ?, purchase_price = ?, sale_price = ?, min_stock = ?, supplier = ?, supplier_id = ?, unit_type = ?,
-     sellable_individually = ?, units_per_package = ?, individual_price = ?, updated_at = datetime("now")
+     sellable_individually = ?, units_per_package = ?, individual_price = ?, needs_review = 0, updated_at = datetime("now")
      WHERE id = ?`
   ).run(
     name || existing.name,
@@ -542,15 +545,31 @@ router.get('/export-excel', authMiddleware, inventoryAdminMiddleware, (req, res)
   }
 });
 
-// Dos formatos reconocidos:
+// Tres formatos reconocidos:
 //  - Propio (encabezados en español por nombre de columna: "Nombre", "Código
 //    de Barras", etc.), pensado para ida y vuelta con /export-excel.
 //  - El del sistema anterior de la tienda (hoja "Articulos", columnas por
 //    posición: ARTÍCULO, DESCRIPCIÓN, LINEA...), que es el que de verdad usa
 //    la tienda para sus exports periódicos de inventario — mismo layout que
-//    lee scripts/import_excel.js. Se detecta por el encabezado y ambos
-//    terminan en la misma fila normalizada para compartir el resto de la
-//    lógica (upsert, categorías, desactivación).
+//    lee scripts/import_excel.js.
+//  - Cualquier otro Excel de inventario: se detectan las columnas por
+//    parecido de nombre (sinónimos comunes), sin importar orden ni
+//    encabezados exactos. Lo que no se logre identificar queda vacío/0 en
+//    vez de descartar la fila, y el producto se marca (needs_review) para
+//    que aparezca hasta arriba del inventario y alguien complete los datos
+//    a mano — mejor tenerlo incompleto que no tenerlo.
+// Los tres terminan en la misma fila normalizada para compartir el resto de
+// la lógica (upsert, categorías, desactivación).
+function stripAccents(s) {
+  return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function normalizeHeader(h) {
+  // Quita puntuación ("Cod. Barras" -> "COD BARRAS") para que las coincidencias
+  // por "contiene" no fallen solo por un punto o un espacio doble de más.
+  return stripAccents(h).trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function normalizeLegacyRow(row) {
   const blocked = parseInt(row[16]) || 0;
   return {
@@ -563,7 +582,8 @@ function normalizeLegacyRow(row) {
     minStock: parseFloat(row[10]) || 0,
     supplier: (row[17] || '').toString().trim(),
     stock: parseFloat(row[22]) || 0,
-    active: blocked === 1 ? 0 : 1
+    active: blocked === 1 ? 0 : 1,
+    needsReview: false
   };
 }
 
@@ -579,7 +599,87 @@ function normalizeOwnRow(row) {
     minStock: parseFloat(row['Stock Mínimo']) || 0,
     supplier: String(row['Proveedor'] ?? '').trim(),
     stock: parseFloat(row['Stock']) || 0,
-    active: (activeVal === 'no' || activeVal === '0' || activeVal === 'false') ? 0 : 1
+    active: (activeVal === 'no' || activeVal === '0' || activeVal === 'false') ? 0 : 1,
+    needsReview: false
+  };
+}
+
+// Sinónimos en orden de prioridad — el primero que coincida gana. "ARTICULO"
+// aparece al final tanto en nombre como en código de barras a propósito: es
+// ambiguo (en el formato legado significa código, coloquialmente puede
+// referirse al producto), así que solo se usa como último recurso.
+const FUZZY_SYNONYMS = {
+  barcode: ['CODIGO DE BARRAS', 'CODIGO BARRAS', 'COD BARRAS', 'SKU', 'EAN', 'CLAVE', 'CODIGO', 'ARTICULO'],
+  name: ['NOMBRE', 'DESCRIPCION', 'PRODUCTO', 'ARTICULO'],
+  category: ['CATEGORIA', 'LINEA', 'FAMILIA', 'DEPARTAMENTO', 'RUBRO'],
+  purchase_price: ['PRECIO DE COMPRA', 'PRECIO COMPRA', 'COSTO UNITARIO', 'COSTO_U', 'COSTO'],
+  sale_price: ['PRECIO DE VENTA', 'PRECIO VENTA', 'PVP', 'P VENTA', 'PRECIO'],
+  stock: ['EXISTENCIAS', 'EXISTENCIA', 'STOCK', 'CANTIDAD', 'INVENTARIO'],
+  min_stock: ['STOCK MINIMO', 'STOCK MIN', 'MINIMO'],
+  supplier: ['PROVEEDOR', 'FABRICANTE'],
+  unit_type: ['TIPO UNIDAD', 'UNIDAD', 'TIPO']
+};
+
+function findColumn(headerNorm, synonyms, used) {
+  for (const syn of synonyms) {
+    const idx = headerNorm.findIndex((h, i) => !used.has(i) && h === syn);
+    if (idx !== -1) return idx;
+  }
+  for (const syn of synonyms) {
+    const idx = headerNorm.findIndex((h, i) => !used.has(i) && h.includes(syn));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+// Se resuelven primero los campos con sinónimos específicos y sin ambigüedad
+// (precio, stock, categoría...), y "name"/"barcode" al final — son los que
+// comparten el sinónimo comodín "ARTICULO" como último recurso, y para
+// entonces las columnas ya usadas por otros campos quedan excluidas, así que
+// no se pisan entre sí ni le quitan la columna a un campo más específico.
+const FUZZY_FIELD_ORDER = ['sale_price', 'purchase_price', 'stock', 'min_stock', 'category', 'supplier', 'unit_type', 'name', 'barcode'];
+
+function detectFuzzyMapping(headerRowRaw) {
+  const headerNorm = headerRowRaw.map(normalizeHeader);
+  const mapping = {};
+  const used = new Set();
+  for (const field of FUZZY_FIELD_ORDER) {
+    const idx = findColumn(headerNorm, FUZZY_SYNONYMS[field], used);
+    if (idx !== -1) {
+      mapping[field] = idx;
+      used.add(idx);
+    }
+  }
+  return mapping;
+}
+
+function normalizeFuzzyRow(row, mapping) {
+  const get = (field) => (mapping[field] !== undefined ? row[mapping[field]] : undefined);
+  const name = String(get('name') ?? '').trim();
+  const barcode = String(get('barcode') ?? '').trim();
+  const categoryName = String(get('category') ?? '').trim();
+  const salePrice = parseFloat(get('sale_price'));
+  const purchasePrice = parseFloat(get('purchase_price'));
+  const stock = parseFloat(get('stock'));
+  const minStock = parseFloat(get('min_stock'));
+  const supplier = String(get('supplier') ?? '').trim();
+
+  return {
+    barcode,
+    name,
+    categoryName,
+    salePrice: isNaN(salePrice) ? 0 : salePrice,
+    purchasePrice: isNaN(purchasePrice) ? 0 : purchasePrice,
+    unitTypeRaw: get('unit_type'),
+    minStock: isNaN(minStock) ? 0 : minStock,
+    supplier,
+    stock: isNaN(stock) ? 0 : stock,
+    // Formato desconocido: no hay forma confiable de interpretar una columna
+    // de "activo"/"bloqueado" (los valores podrían significar cualquier
+    // cosa), así que se importa siempre activo en vez de arriesgarse a
+    // desactivar de más.
+    active: 1,
+    needsReview: !categoryName || isNaN(salePrice) || salePrice <= 0
   };
 }
 
@@ -596,20 +696,27 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
     if (!ws) return res.status(400).json({ error: 'El archivo no tiene hojas' });
 
     const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-    const headerRow = (rawRows[0] || []).map(h => String(h).trim().toUpperCase());
-    const isLegacyFormat = headerRow.includes('ARTÍCULO') || headerRow.includes('ARTICULO') || headerRow.includes('DESCRIPCIÓN') || headerRow.includes('DESCRIPCION');
+    const headerRowRaw = rawRows[0] || [];
+    const headerNorm = headerRowRaw.map(normalizeHeader);
+    const isLegacyFormat = headerNorm.includes('ARTICULO') || headerNorm.includes('DESCRIPCION');
+    const isOwnFormat = headerNorm.includes('NOMBRE') && (headerNorm.includes('CODIGO DE BARRAS') || headerNorm.includes('PRECIO VENTA'));
 
     if (isLegacyFormat) {
       normalizedRows = rawRows.slice(1).filter(r => r[0] || r[1]).map(normalizeLegacyRow);
-    } else {
+    } else if (isOwnFormat) {
       normalizedRows = XLSX.utils.sheet_to_json(ws, { defval: '' }).map(normalizeOwnRow);
+    } else {
+      const mapping = detectFuzzyMapping(headerRowRaw);
+      normalizedRows = rawRows.slice(1)
+        .filter(r => r.some(c => String(c ?? '').trim() !== ''))
+        .map(r => normalizeFuzzyRow(r, mapping));
     }
   } catch (e) {
     return res.status(400).json({ error: 'No se pudo leer el archivo Excel: ' + e.message });
   }
 
   const db = getDB();
-  let inserted = 0, updated = 0, deactivated = 0, skipped = 0;
+  let inserted = 0, updated = 0, deactivated = 0, skipped = 0, needsReviewCount = 0;
 
   const transaction = db.transaction(() => {
     const seenBarcodes = new Set();
@@ -646,19 +753,21 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
       const supplier = row.supplier || null;
       const unitType = labelToUnitType(row.unitTypeRaw);
       const active = row.active;
+      const needsReview = row.needsReview ? 1 : 0;
+      if (needsReview) needsReviewCount++;
 
       seenBarcodes.add(barcode);
 
       const existing = db.prepare('SELECT id FROM products WHERE barcode = ?').get(barcode);
       if (existing) {
         db.prepare(
-          `UPDATE products SET name=?, category_id=?, category_name=?, purchase_price=?, sale_price=?, stock=?, min_stock=?, supplier=?, unit_type=?, active=?, updated_at=datetime('now') WHERE id=?`
-        ).run(name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active, existing.id);
+          `UPDATE products SET name=?, category_id=?, category_name=?, purchase_price=?, sale_price=?, stock=?, min_stock=?, supplier=?, unit_type=?, active=?, needs_review=?, updated_at=datetime('now') WHERE id=?`
+        ).run(name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active, needsReview, existing.id);
         updated++;
       } else {
         db.prepare(
-          `INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, unit_type, active) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-        ).run(barcode, name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active);
+          `INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, unit_type, active, needs_review) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).run(barcode, name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active, needsReview);
         inserted++;
       }
     }
@@ -695,7 +804,7 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
     return res.status(500).json({ error: 'Error al importar: ' + e.message });
   }
 
-  res.json({ inserted, updated, deactivated, skipped });
+  res.json({ inserted, updated, deactivated, skipped, needsReview: needsReviewCount });
 });
 
 module.exports = router;

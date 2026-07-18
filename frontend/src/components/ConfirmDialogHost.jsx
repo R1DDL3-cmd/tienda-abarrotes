@@ -21,7 +21,7 @@ export default function ConfirmDialogHost() {
   }
 
   return (
-    <div className="modal-overlay" onClick={() => resolve(false)} onKeyDown={modalKeys(() => resolve(false), () => resolve(true))}>
+    <div className="modal-overlay confirm-dialog-overlay" onClick={() => resolve(false)} onKeyDown={modalKeys(() => resolve(false), () => resolve(true))}>
       <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
         <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{request.message}</p>
         <div className="modal-actions">

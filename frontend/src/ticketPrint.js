@@ -6,8 +6,14 @@ export function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 }
 
+// El rollo térmico es de 58mm, pero el área que el cabezal de impresión
+// realmente alcanza a imprimir en la inmensa mayoría de esas impresoras es de
+// ~48mm (el resto es margen mecánico de cada lado) — usar los 58mm completos
+// como ancho de contenido cortaba el borde derecho del ticket.
+const TICKET_WIDTH = '48mm'
+
 const TICKET_STYLE = `
-  body { font-family: 'Courier New', monospace; font-size: 12px; width: 58mm; margin: 0; padding: 6px; line-height: 1.55; }
+  body { font-family: 'Courier New', monospace; font-size: 12px; width: ${TICKET_WIDTH}; margin: 0; padding: 6px; line-height: 1.55; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   th, td { padding: 3px 0; overflow-wrap: break-word; word-break: break-word; }
   th { border-bottom: 1px solid #000; font-size: 11px; padding-bottom: 4px; }
@@ -21,7 +27,12 @@ const TICKET_STYLE = `
   p { margin: 3px 0; }
   .total-box { border: 1px solid #000; border-radius: 3px; padding: 6px 8px; margin-top: 8px; }
   .total-box .total-amount { font-size: 16px; margin: 2px 0; }
-  @media print { body { width: 58mm; } }
+  .ticket-actions { display: flex; gap: 8px; margin-bottom: 10px; }
+  .ticket-actions button { flex: 1; font-family: inherit; font-size: 12px; padding: 8px; border: 1px solid #000; background: #fff; cursor: pointer; }
+  @media print {
+    body { width: ${TICKET_WIDTH}; }
+    .ticket-actions { display: none; }
+  }
 `
 
 export function buildStoreHeader(storeInfo) {
@@ -36,24 +47,28 @@ export function buildStoreHeader(storeInfo) {
 // Devuelve la ventana abierta, o null si el navegador bloqueó el popup —
 // quien llame debe avisarle al usuario en ese caso.
 //
-// window.onafterprint cierra la ventana sola en cuanto se cierra el diálogo
-// de impresión (se haya impreso o cancelado). Antes se quedaba abierta
-// indefinidamente hasta que alguien la cerrara a mano — y en Electron, esta
-// ventana es una BrowserWindow real (ver electron/main.js), así que mientras
-// siguiera abierta el teclado de la ventana principal se quedaba sin
-// responder (el arreglo de foco solo se dispara cuando esta ventana se
-// cierra, no cuando el diálogo nativo de impresión se cierra).
+// v1.0.3 intentó cerrar esta ventana sola con window.onafterprint apenas se
+// cerraba el diálogo de impresión, para resincronizar el foco de la ventana
+// principal (ver registerChildWindowFocusFix en electron/main.js) sin
+// depender de que alguien la cerrara a mano. En la práctica, 'afterprint' se
+// dispara casi de inmediato en este contexto de Electron — MUCHO antes de
+// que el usuario alcance siquiera a ver el diálogo de impresión, así que la
+// ventana se autodestruía antes de poder imprimir nada. Ahora imprimir y
+// cerrar son botones explícitos: más lento un clic, pero confiable. El
+// resync de foco sigue disparándose igual cuando la ventana se cierra
+// (con el botón o con la X), solo que ahora sucede cuando el usuario
+// realmente termina, no antes.
 export function openTicketWindow({ title, bodyHtml }) {
   const win = window.open('', '_blank', 'width=380,height=600')
   if (!win) return null
   win.document.write(`
     <html><head><title>${escapeHtml(title)}</title>
     <style>${TICKET_STYLE}</style></head><body>
+    <div class="ticket-actions">
+      <button onclick="window.print()">Imprimir</button>
+      <button onclick="window.close()">Cerrar</button>
+    </div>
     ${bodyHtml}
-    <script>
-      window.onafterprint = () => window.close()
-      window.print()
-    </script>
     </body></html>
   `)
   win.document.close()

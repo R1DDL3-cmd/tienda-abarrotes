@@ -575,9 +575,23 @@ export default function POS({ user, onLogout }) {
     setShowEndDayModal(true)
   }
 
+  // El efectivo esperado se calcula igual que el backend (server/routes/
+  // accounting.js): apertura + ventas - gastos. Si el monto contado se aleja
+  // mucho de eso, se pide confirmar antes de guardarlo — antes se aceptaba
+  // cualquier valor (incluido $0 con efectivo real en caja) sin avisar nada,
+  // lo que podía esconder un faltante real o un error de captura.
+  const confirmCashAmount = async (amount) => {
+    if (!registerData) return true
+    const expected = parseFloat(registerData.opening_amount || 0) + parseFloat(registerData.totalSales || 0) - parseFloat(registerData.totalExpenses || 0)
+    if (Math.abs(amount - expected) <= 1) return true
+    return confirmDialog(`El efectivo esperado en caja es ${formatMoney(expected)}, pero ingresaste ${formatMoney(amount)} (diferencia de ${formatMoney(amount - expected)}). ¿Confirmas que ese es el efectivo real contado?`)
+  }
+
   const handleEndDaySubmit = async () => {
+    const amount = parseFloat(endDayAmount) || 0
+    if (!(await confirmCashAmount(amount))) return
     try {
-      await accounting.updateCashRegister({ closing_amount: parseFloat(endDayAmount) || 0 })
+      await accounting.updateCashRegister({ closing_amount: amount })
       setShowEndDayModal(false)
       await loadRegister()
       setSuccess('Cierre de día registrado')
@@ -650,9 +664,11 @@ export default function POS({ user, onLogout }) {
   }
 
   const handleCashCountSubmit = async () => {
+    const amount = parseFloat(cashCountAmount) || 0
+    if (!(await confirmCashAmount(amount))) return
     try {
       if (currentSession) {
-        try { await accounting.closeSession(currentSession.id, { closing_amount: parseFloat(cashCountAmount) || 0 }) } catch (e) { setError(e.message) }
+        try { await accounting.closeSession(currentSession.id, { closing_amount: amount }) } catch (e) { setError(e.message) }
       }
     } catch (_) {}
     setShowCashCountModal(false)
