@@ -6,6 +6,7 @@ import { formatDateTime, formatDate, formatTime, formatLiveClock } from '../date
 import { getShortcuts, matchesShortcut } from '../shortcuts'
 import { escapeHtml, buildStoreHeader, openTicketWindow } from '../ticketPrint'
 import { modalKeys } from '../modalKeys'
+import { confirmDialog } from '../confirmDialog'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -690,7 +691,7 @@ export default function POS({ user, onLogout }) {
                   <button className="btn btn-sm btn-outline" onClick={() => { setWithdrawalAmount(''); setWithdrawalReason(''); setShowWithdrawalModal(true) }}>Retiro</button>
                 )}
                 <button className="btn btn-sm btn-outline" onClick={() => { loadWithdrawals(); setShowWithdrawalsList(true) }}>Retiros</button>
-                {registerData && parseFloat(registerData.opening_amount) > 0 && registerData.status !== 'closed' && (
+                {registerData && registerData.status !== 'closed' && (
                   <button className="btn btn-sm btn-warning" onClick={handleEndDayClick}>Cerrar Dia</button>
                 )}
               </>
@@ -1235,7 +1236,7 @@ export default function POS({ user, onLogout }) {
                           {item.status === 'failed' && (
                             <>
                               <button className="btn btn-sm btn-outline" onClick={() => { retryFailed(item.id); refreshQueueState(); trySyncQueue() }}>Reintentar</button>
-                              <button className="btn btn-sm btn-danger" onClick={() => { if (confirm('¿Descartar esta venta? No se registrará en el sistema.')) { discardFailed(item.id); refreshQueueState() } }}>Descartar</button>
+                              <button className="btn btn-sm btn-danger" onClick={async () => { if (await confirmDialog('¿Descartar esta venta? No se registrará en el sistema.')) { discardFailed(item.id); refreshQueueState() } }}>Descartar</button>
                             </>
                           )}
                         </td>

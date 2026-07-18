@@ -23,6 +23,31 @@ function updateProductStock(productId, quantity, userId, referenceType, referenc
   recordInventoryMovement(productId, 'in', quantity, stockBefore, stockAfter, referenceType, referenceId, notes, userId);
 }
 
+// Una compra confirmada (directa o recibida) se refleja como gasto en
+// Contabilidad — antes solo afectaba el inventario y nunca aparecía ahí,
+// pese a ser dinero real que sale de la caja.
+function recordPurchaseExpense(purchaseId, supplierName, amount, invoiceNumber, userId, userName) {
+  const db = getDB();
+  db.prepare(
+    `INSERT INTO expenses (description, amount, category, payment_method, notes, created_by, reference_type, reference_id)
+     VALUES (?, ?, 'Compra a proveedor', 'cash', ?, ?, 'purchase', ?)`
+  ).run(`Compra a proveedor: ${supplierName || 'Sin proveedor'}`, amount, invoiceNumber ? `Factura: ${invoiceNumber}` : null, userId, purchaseId);
+
+  const today = new Date().toISOString().split('T')[0];
+  const register = db.prepare('SELECT id FROM cash_register WHERE date = ?').get(today);
+  if (register) {
+    db.prepare(
+      `INSERT INTO cash_movements (cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at)
+       VALUES (?, 'expense', ?, ?, ?, 'purchase', ?, ?, datetime('now'))`
+    ).run(register.id, `Compra a proveedor #${purchaseId} — ${supplierName || ''}`, amount, purchaseId, userId, userName || '');
+  }
+}
+
+function removePurchaseExpense(purchaseId) {
+  const db = getDB();
+  db.run("DELETE FROM expenses WHERE reference_type = 'purchase' AND reference_id = ?", [purchaseId]);
+}
+
 router.post('/suppliers/sync-from-products', (req, res) => {
   try {
     const db = getDB();
@@ -235,6 +260,8 @@ router.post('/purchases', (req, res) => {
           updateProductStock(item.product_id, parseFloat(item.quantity) || 0, req.user.id, 'purchase', purchaseId, `Compra #${purchaseId}`);
         }
       });
+      const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
+      recordPurchaseExpense(purchaseId, supplier?.name, total, invoice_number, req.user.id, req.user.name);
     }
 
     res.json({ id: purchaseId, message: purchaseStatus === 'pending' ? 'Pedido creado' : 'Compra registrada e inventariada' });
@@ -293,6 +320,9 @@ router.put('/purchases/:id/receive', (req, res) => {
       const newTotal = newSubtotal + newTax;
       db.run('UPDATE purchases SET status = ?, subtotal = ?, tax = ?, total = ? WHERE id = ?',
         ['completed', newSubtotal, newTax, newTotal, req.params.id]);
+
+      const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(purchase.supplier_id);
+      recordPurchaseExpense(purchase.id, supplier?.name, newTotal, purchase.invoice_number, req.user.id, req.user.name);
     });
     transact();
 
@@ -328,6 +358,10 @@ router.delete('/purchases/:id', (req, res) => {
             }
           }
         });
+        // El gasto se registró al confirmarse/recibirse la compra (ver
+        // recordPurchaseExpense) — al cancelarla, se quita también, igual
+        // que ya se revierte el stock arriba.
+        removePurchaseExpense(purchase.id);
       }
       db.run('UPDATE purchases SET status = ? WHERE id = ?', ['cancelled', req.params.id]);
     });

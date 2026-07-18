@@ -3,6 +3,7 @@ import { products, accounting, suppliers as suppliersApi } from '../api'
 import { formatDateTime, formatDate, formatCalendarDate } from '../dateUtils'
 import { getTheme, toggleTheme } from '../theme'
 import { modalKeys } from '../modalKeys'
+import { confirmDialog } from '../confirmDialog'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -78,7 +79,7 @@ export default function Inventory({ user, onLogout }) {
   const handleImportExcel = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    if (!confirm(`¿Importar "${file.name}"? Se actualizarán los productos existentes, se crearán los nuevos y se desactivará cualquier producto activo que no aparezca en el archivo.`)) {
+    if (!(await confirmDialog(`¿Importar "${file.name}"? Se actualizarán los productos existentes, se crearán los nuevos y se desactivará cualquier producto activo que no aparezca en el archivo.`))) {
       e.target.value = ''
       return
     }
@@ -114,7 +115,7 @@ export default function Inventory({ user, onLogout }) {
   }
 
   const handleDeleteCategory = async (id) => {
-    if (!confirm('¿Eliminar esta categoría? Los productos asociados quedarán sin categoría.')) return
+    if (!(await confirmDialog('¿Eliminar esta categoría? Los productos asociados quedarán sin categoría.'))) return
     try {
       await products.deleteCategory(id)
       await loadCategories()
@@ -188,7 +189,7 @@ export default function Inventory({ user, onLogout }) {
   }
 
   const handleDelete = async (id) => {
-    if (!confirm('Desactivar este producto?')) return
+    if (!(await confirmDialog('Desactivar este producto?'))) return
     try { await products.remove(id); loadProducts(); setSuccess('Producto desactivado'); setTimeout(() => setSuccess(''), 3000) }
     catch (e) { setError(e.message) }
   }
@@ -225,7 +226,7 @@ export default function Inventory({ user, onLogout }) {
   }
 
   const handleDeleteBatch = async (batchId) => {
-    if (!confirm('Eliminar este lote?')) return
+    if (!(await confirmDialog('Eliminar este lote?'))) return
     try {
       await products.deleteBatch(batchId)
       const res = await products.batches(batchProduct.id)
@@ -259,7 +260,7 @@ export default function Inventory({ user, onLogout }) {
   }
 
   const handleDeleteBarcode = async (barcodeId) => {
-    if (!confirm('Eliminar este código?')) return
+    if (!(await confirmDialog('Eliminar este código?'))) return
     try {
       await products.deleteBarcode(barcodeId)
       const res = await products.barcodes(barcodeProduct.id)
@@ -307,7 +308,7 @@ export default function Inventory({ user, onLogout }) {
 
   const handleDeactivateSelected = async () => {
     if (selectedObsolete.size === 0) return
-    if (!confirm(`¿Desactivar ${selectedObsolete.size} producto(s)? Podrás reactivarlos manualmente después si hace falta.`)) return
+    if (!(await confirmDialog(`¿Desactivar ${selectedObsolete.size} producto(s)? Podrás reactivarlos manualmente después si hace falta.`))) return
     try {
       for (const id of selectedObsolete) {
         await products.remove(id)

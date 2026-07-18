@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { events } from '../api'
 import { modalKeys } from '../modalKeys'
+import { confirmDialog } from '../confirmDialog'
 
 function formatDate(d) {
   if (!d) return ''
@@ -61,7 +62,7 @@ export default function Events({ user }) {
   }
 
   const handleDelete = async (id) => {
-    if (!confirm('Eliminar este evento?')) return
+    if (!(await confirmDialog('Eliminar este evento?'))) return
     try { await events.delete(id); setSuccess('Evento eliminado'); loadEvents() }
     catch (e) { setError(e.message) }
   }

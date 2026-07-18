@@ -4,6 +4,7 @@ import { setToken, getToken, auth, accounting, settings as settingsApi } from '.
 import { applyPalette } from './theme'
 import ErrorBoundary from './components/ErrorBoundary'
 import LogoWatermark from './components/LogoWatermark'
+import ConfirmDialogHost from './components/ConfirmDialogHost'
 import { modalKeys } from './modalKeys'
 import Login from './components/Login'
 import POS from './components/POS'
@@ -174,6 +175,7 @@ export default function App() {
     <ErrorBoundary>
     <HashRouter>
       {user && <LogoWatermark />}
+      <ConfirmDialogHost />
       {!isOnline && (
         <div className="offline-banner">
           Sin conexión — mostrando el catálogo guardado, puede no estar al día. No se puede cobrar hasta recuperar la señal.

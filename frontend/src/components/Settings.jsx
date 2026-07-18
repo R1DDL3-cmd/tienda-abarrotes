@@ -4,6 +4,7 @@ import { formatDate, formatDateTime } from '../dateUtils'
 import { getTheme, setTheme, applyPalette, clearPalette } from '../theme'
 import { getShortcuts, setShortcutKey, resetShortcuts, eventToKeyString, DEFAULT_SHORTCUTS } from '../shortcuts'
 import { modalKeys } from '../modalKeys'
+import { confirmDialog } from '../confirmDialog'
 import { getManualOffsetHours, setManualOffsetHours } from '../dateUtils'
 
 function formatMoney(n) {
@@ -158,7 +159,7 @@ export default function Settings({ user }) {
   }
 
   const handleDeleteUser = async (id) => {
-    if (!confirm('Eliminar este usuario?')) return
+    if (!(await confirmDialog('Eliminar este usuario?'))) return
     try { await auth.deleteUser(id); loadUsers(); setSuccess('Usuario eliminado'); setTimeout(() => setSuccess(''), 3000) }
     catch (e) { setError(e.message) }
   }
@@ -285,7 +286,7 @@ export default function Settings({ user }) {
     const file = e.target.files?.[0]
     if (!file) return
     if (!file.name.endsWith('.db')) { setError('Solo archivos .db'); return }
-    if (!confirm(`¿Importar "${file.name}"? Se reemplazará la base de datos actual y la aplicación se reiniciará.`)) return
+    if (!(await confirmDialog(`¿Importar "${file.name}"? Se reemplazará la base de datos actual y la aplicación se reiniciará.`))) return
     try {
       await backup.importDB(file)
       setSuccess('Base de datos importada. Reiniciando...')

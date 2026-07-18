@@ -4,6 +4,7 @@ import { formatDateTime, formatDate, isSameLocalDay } from '../dateUtils'
 import Events from './Events'
 import PredictionsTab from './PredictionsTab'
 import { modalKeys } from '../modalKeys'
+import { confirmDialog } from '../confirmDialog'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -356,7 +357,7 @@ export default function Accounting({ user, onLogout }) {
                     <td>{e.payment_method}</td>
                     <td style={{fontSize:'0.8rem'}}>{e.notes || '-'}</td>
                     <td>{e.created_by_name || '-'}</td>
-                    <td>{user?.role === 'admin' && <button className="btn btn-sm btn-danger" onClick={async () => { if (confirm('Eliminar gasto?')) { await accounting.deleteExpense(e.id); loadExpenses() } }}>X</button>}</td>
+                    <td>{user?.role === 'admin' && <button className="btn btn-sm btn-danger" onClick={async () => { if (await confirmDialog('Eliminar gasto?')) { await accounting.deleteExpense(e.id); loadExpenses() } }}>X</button>}</td>
                   </tr>
                 ))}
                 {expenses.length === 0 && <tr><td colSpan="8" className="text-center">Sin gastos registrados</td></tr>}

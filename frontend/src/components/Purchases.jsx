@@ -3,6 +3,7 @@ import { suppliers as suppliersApi, purchases as purchasesApi, products as produ
 import { formatDate, formatDateTime } from '../dateUtils'
 import { escapeHtml, buildStoreHeader, openTicketWindow } from '../ticketPrint'
 import { modalKeys } from '../modalKeys'
+import { confirmDialog } from '../confirmDialog'
 
 export default function Purchases({ user }) {
   const [storeInfo, setStoreInfo] = useState({ store_name: 'Tienda de Abarrotes', store_address: '', store_phone: '' })
@@ -110,7 +111,7 @@ export default function Purchases({ user }) {
   }
 
   const handleDeleteSupplier = async (id) => {
-    if (!confirm('Desactivar este proveedor?')) return
+    if (!(await confirmDialog('Desactivar este proveedor?'))) return
     try {
       await suppliersApi.remove(id)
       loadSuppliers()
@@ -205,7 +206,7 @@ export default function Purchases({ user }) {
   }
 
   const handleCancelPurchase = async (purchaseId) => {
-    if (!confirm('Cancelar esta compra? Se revertira el stock si ya fue inventariada.')) return
+    if (!(await confirmDialog('Cancelar esta compra? Se revertira el stock si ya fue inventariada.'))) return
     try {
       await purchasesApi.cancel(purchaseId)
       if (selectedSupplier) loadPurchases(selectedSupplier.id)

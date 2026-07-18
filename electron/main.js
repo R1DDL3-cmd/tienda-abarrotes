@@ -213,18 +213,79 @@ function createTray() {
   });
 }
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Convierte las notas de la release de GitHub (líneas markdown simples con
+// "- ") en HTML legible. No es un parser de markdown completo — solo cubre
+// el formato que de verdad se usa al publicar cada versión.
+function renderReleaseNotes(notes) {
+  const lines = String(notes || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const items = lines.map(l => l.replace(/^[-*]\s*/, ''));
+  if (items.length === 0) return '<p>Sin notas para esta versión.</p>';
+  return '<ul>' + items.map(i => `<li>${escapeHtml(i)}</li>`).join('') + '</ul>';
+}
+
+// Ventana propia (no un diálogo nativo) para mostrar qué cambió respecto a la
+// versión anterior. Se usa a propósito una BrowserWindow en vez de
+// dialog.showMessageBox: un diálogo nativo sobre la ventana principal es
+// exactamente el patrón que rompe el enrutamiento de teclado de Chromium
+// (ver registerChildWindowFocusFix arriba) — por eso también se le aplica el
+// mismo resync de foco al cerrarse.
+function showChangelogWindow(info) {
+  const win = new BrowserWindow({
+    width: 420,
+    height: 520,
+    parent: mainWindow || undefined,
+    icon: ICON_PATH,
+    title: 'Actualización disponible',
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
+  });
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    body { font-family: -apple-system, 'Segoe UI', sans-serif; margin: 0; padding: 1.25rem; color: #1e293b; }
+    h2 { margin: 0 0 0.25rem 0; font-size: 1.2rem; }
+    p.version { color: #64748b; margin: 0 0 1rem 0; font-size: 0.9rem; }
+    ul { padding-left: 1.1rem; line-height: 1.6; }
+    .actions { margin-top: 1.25rem; text-align: right; }
+    button { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.1rem; font-size: 0.9rem; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+  </style></head><body>
+    <h2>Nueva versión descargada</h2>
+    <p class="version">v${escapeHtml(info.version)} — se instala al cerrar el programa, o reinicia ahora desde el ícono de la bandeja.</p>
+    ${renderReleaseNotes(info.releaseNotes)}
+    <div class="actions"><button onclick="window.close()">Cerrar</button></div>
+  </body></html>`;
+
+  win.setMenuBarVisibility(false);
+  win.loadURL('data:text/html,' + encodeURIComponent(html));
+
+  // Mismo arreglo de foco que registerChildWindowFocusFix, aplicado aquí
+  // directamente porque esta ventana la crea el proceso principal (no
+  // window.open() desde el renderer), así que did-create-window no la agarra.
+  win.on('closed', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.blur();
+      mainWindow.focus();
+      mainWindow.webContents.focus();
+    }
+  });
+}
+
 function setupAutoUpdater() {
   if (isDev) return;
 
   autoUpdater.autoInstallOnAppQuit = true;
 
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('update-downloaded', (info) => {
     updateReadyToInstall = true;
     if (tray) tray.setContextMenu(buildTrayMenu());
     new Notification({
       title: 'Actualización descargada',
       body: 'Hay una nueva versión lista. Se instalará al cerrar el programa, o puedes reiniciar ahora desde el ícono de la bandeja.'
     }).show();
+    showChangelogWindow(info);
   });
 
   autoUpdater.on('error', (err) => {

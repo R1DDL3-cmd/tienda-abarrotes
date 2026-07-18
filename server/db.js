@@ -634,6 +634,14 @@ const SCHEMA_MIGRATIONS = [
       }
     } catch (e) {}
   },
+  // v10: liga expenses a lo que lo generó (ej. una compra a proveedor
+  // confirmada), igual que ya hacen inventory_movements y cash_movements.
+  // Antes, confirmar/recibir una compra nunca se reflejaba como gasto en
+  // Contabilidad — solo afectaba el inventario.
+  (db) => {
+    try { db.exec('ALTER TABLE expenses ADD COLUMN reference_type TEXT'); } catch (e) {}
+    try { db.exec('ALTER TABLE expenses ADD COLUMN reference_id INTEGER'); } catch (e) {}
+  },
 ];
 
 function getSchemaVersion(db) {
