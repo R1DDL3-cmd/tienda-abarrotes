@@ -3,6 +3,7 @@ const router = express.Router();
 const { getDB } = require('../db');
 const { authMiddleware, purchasesMiddleware } = require('../middleware/auth');
 const { predictAll } = require('../services/predictions');
+const { businessToday } = require('../bizdate');
 
 router.use(authMiddleware);
 router.use(purchasesMiddleware);
@@ -33,7 +34,7 @@ function recordPurchaseExpense(purchaseId, supplierName, amount, invoiceNumber, 
      VALUES (?, ?, 'Compra a proveedor', 'cash', ?, ?, 'purchase', ?)`
   ).run(`Compra a proveedor: ${supplierName || 'Sin proveedor'}`, amount, invoiceNumber ? `Factura: ${invoiceNumber}` : null, userId, purchaseId);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = businessToday();
   const register = db.prepare('SELECT id FROM cash_register WHERE date = ?').get(today);
   if (register) {
     db.prepare(
@@ -46,6 +47,9 @@ function recordPurchaseExpense(purchaseId, supplierName, amount, invoiceNumber, 
 function removePurchaseExpense(purchaseId) {
   const db = getDB();
   db.run("DELETE FROM expenses WHERE reference_type = 'purchase' AND reference_id = ?", [purchaseId]);
+  // También el movimiento de caja que generó (ver recordPurchaseExpense) —
+  // si se queda, el efectivo esperado del corte carga un gasto que ya no existe.
+  db.run("DELETE FROM cash_movements WHERE type = 'expense' AND reference_type = 'purchase' AND reference_id = ?", [purchaseId]);
 }
 
 router.post('/suppliers/sync-from-products', (req, res) => {

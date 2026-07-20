@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const { getDB, getDBPath, reloadDB } = require('../db');
+const { getDB, getDBPath, reloadDB, cancelPendingSave } = require('../db');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
@@ -89,6 +89,9 @@ router.post('/restore', authMiddleware, adminMiddleware, (req, res) => {
     const dbPath = getDBPath();
     const backupBeforePath = dbPath + '.pre_restore_backup';
     fs.copyFileSync(dbPath, backupBeforePath);
+    // Descartar guardados en vuelo de la BD vieja: uno pendiente podía
+    // disparar entre la copia y el reload y sobreescribir el archivo restaurado.
+    cancelPendingSave();
     fs.copyFileSync(backupPath, dbPath);
 
     reloadDB();
@@ -126,6 +129,7 @@ router.post('/import', authMiddleware, adminMiddleware, (req, res) => {
 
     const backupPath = dbPath + '.pre_import_backup';
     fs.copyFileSync(dbPath, backupPath);
+    cancelPendingSave();
     fs.writeFileSync(dbPath, buffer);
 
     try {

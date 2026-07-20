@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDB } = require('../db');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { businessToday } = require('../bizdate');
 
 const router = express.Router();
 
@@ -65,9 +66,24 @@ router.post('/:id/payment', authMiddleware, (req, res) => {
 
   const transaction = db.transaction(() => {
     db.prepare('UPDATE customers SET balance = balance - ? WHERE id = ?').run(amount, req.params.id);
-    db.prepare(
+    const payResult = db.prepare(
       'INSERT INTO customer_payments (customer_id, amount, payment_method, notes, created_by) VALUES (?, ?, ?, ?, ?)'
     ).run(req.params.id, amount, payment_method || 'cash', notes || null, req.user.id);
+
+    // Un abono en efectivo mete billetes al cajón: sin este movimiento, el
+    // efectivo esperado del corte salía menor al real cada vez que un cliente
+    // pagaba su fiado (el dinero "sobraba" sin explicación).
+    const method = payment_method || 'cash';
+    if (method === 'cash') {
+      const today = businessToday();
+      const register = db.prepare('SELECT id FROM cash_register WHERE date = ?').get(today);
+      if (register) {
+        db.prepare(
+          `INSERT INTO cash_movements (cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at)
+           VALUES (?, 'payment', ?, ?, ?, 'customer_payment', ?, ?, datetime("now"))`
+        ).run(register.id, `Abono de ${customer.name} — $${parseFloat(amount).toFixed(2)}`, amount, payResult.lastInsertRowid, req.user.id, req.user.name || '');
+      }
+    }
   });
 
   try {

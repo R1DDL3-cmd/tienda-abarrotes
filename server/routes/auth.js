@@ -6,16 +6,23 @@ const { generateToken, authMiddleware, adminMiddleware } = require('../middlewar
 const router = express.Router();
 
 const loginAttempts = new Map();
+const RATE_WINDOW_MS = 15 * 60 * 1000;
 
 function rateLimit(ip) {
   const now = Date.now();
-  const windowMs = 15 * 60 * 1000;
+  // Poda de entradas viejas: el mapa crecía sin límite (una entrada por IP
+  // que alguna vez intentó login, para siempre).
+  if (loginAttempts.size > 500) {
+    for (const [key, entry] of loginAttempts) {
+      if (now - entry.start > RATE_WINDOW_MS) loginAttempts.delete(key);
+    }
+  }
   if (!loginAttempts.has(ip)) {
     loginAttempts.set(ip, { count: 1, start: now });
     return true;
   }
   const entry = loginAttempts.get(ip);
-  if (now - entry.start > windowMs) {
+  if (now - entry.start > RATE_WINDOW_MS) {
     loginAttempts.set(ip, { count: 1, start: now });
     return true;
   }
@@ -45,9 +52,20 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
   }
 
+  // Login exitoso: no debe seguir contando contra el límite de intentos.
+  loginAttempts.delete(ip);
+
+  // Las contraseñas de fábrica están documentadas en el README (cualquiera en
+  // el WiFi de la tienda puede probarlas): el frontend obliga a cambiarlas en
+  // el primer inicio de sesión cuando este flag viene activo.
+  const usingDefaultPassword =
+    (user.username === 'admin' && password === 'admin123') ||
+    (user.username === 'cajero' && password === 'cajero123');
+
   const token = generateToken(user);
   res.json({
     token,
+    must_change_password: usingDefaultPassword,
     user: {
       id: user.id,
       username: user.username,

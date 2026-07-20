@@ -7,19 +7,45 @@ const jwt = require('jsonwebtoken');
 // el código): un secreto constante permitiría forjar tokens de admin sin
 // credenciales en CUALQUIER instalación del software, ya que el .asar
 // empaquetado es trivialmente extraíble.
+//
+// Vive junto a la base de datos (getDataDir: APPDATA en Electron, data/ en
+// dev). Antes se guardaba en __dirname/../../data — en la app empaquetada esa
+// ruta cae DENTRO del .asar (solo lectura): la escritura fallaba en silencio
+// y se generaba un secreto nuevo en cada arranque, invalidando todas las
+// sesiones cada vez que se reiniciaba el programa.
 function loadSecret() {
-  const configPath = path.join(__dirname, '..', '..', 'data', '.secret');
+  const { getDataDir } = require('../db');
+  let configPath;
+  try {
+    configPath = path.join(getDataDir(), '.secret');
+  } catch (e) {
+    configPath = path.join(__dirname, '..', '..', 'data', '.secret');
+  }
   try {
     const existing = fs.readFileSync(configPath, 'utf8').trim();
     if (existing) return existing;
   } catch (e) {}
-  const secret = crypto.randomBytes(48).toString('hex');
+
+  // Migración: instalaciones de desarrollo viejas lo tenían en data/ del
+  // proyecto — se conserva ese secreto para no invalidar sesiones al actualizar.
+  let secret = null;
+  try {
+    const legacyPath = path.join(__dirname, '..', '..', 'data', '.secret');
+    if (legacyPath !== configPath) {
+      const legacy = fs.readFileSync(legacyPath, 'utf8').trim();
+      if (legacy) secret = legacy;
+    }
+  } catch (e) {}
+
+  if (!secret) secret = crypto.randomBytes(48).toString('hex');
   try {
     if (!fs.existsSync(path.dirname(configPath))) {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
     }
     fs.writeFileSync(configPath, secret, { encoding: 'utf8', mode: 0o600 });
-  } catch (e) {}
+  } catch (e) {
+    console.error('No se pudo persistir el secreto JWT (las sesiones se invalidarán al reiniciar):', e.message);
+  }
   return secret;
 }
 

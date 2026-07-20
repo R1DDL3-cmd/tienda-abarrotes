@@ -43,20 +43,34 @@ async function start() {
 
   function autoBackup() {
     try {
+      const { businessToday } = require('./bizdate');
       const backupDir = getBackupDir();
-      const today = new Date().toISOString().split('T')[0];
+      const today = businessToday();
       const backupFile = path.join(backupDir, `tienda_auto_${today}.db`);
       if (!fs.existsSync(backupFile)) {
         const db = getDB();
         db.backup(backupFile);
         console.log(`Auto-backup created: ${backupFile}`);
       }
+      // Retención: los automáticos de más de 60 días se borran para que la
+      // carpeta no crezca para siempre. Los respaldos manuales
+      // (tienda_backup_*) nunca se tocan.
+      const cutoff = Date.now() - 60 * 24 * 60 * 60 * 1000;
+      for (const f of fs.readdirSync(backupDir)) {
+        if (!/^tienda_auto_\d{4}-\d{2}-\d{2}\.db$/.test(f)) continue;
+        const full = path.join(backupDir, f);
+        try {
+          if (fs.statSync(full).mtimeMs < cutoff) fs.unlinkSync(full);
+        } catch (e) {}
+      }
     } catch (e) {
       console.error('Auto-backup error:', e.message);
     }
   }
   autoBackup();
-  setInterval(autoBackup, 24 * 60 * 60 * 1000);
+  // unref: este intervalo no debe mantener vivo el proceso por sí solo (los
+  // tests arrancan el servidor en el mismo proceso y necesitan poder salir).
+  setInterval(autoBackup, 24 * 60 * 60 * 1000).unref();
 
   app.use('/api/auth', authRoutes);
   app.use('/api/products', productRoutes);
@@ -112,6 +126,7 @@ async function start() {
 
   function tryPort(port) {
     const server = app.listen(port, '0.0.0.0', () => {
+      httpServer = server;
       process.env.ACTUAL_PORT = port;
       const os = require('os');
       const interfaces = os.networkInterfaces();
@@ -143,3 +158,7 @@ start().catch(err => {
   console.error('Error starting server:', err);
   if (!process.env.ELECTRON_RUN) process.exit(1);
 });
+
+// Solo para tests: permite cerrar el servidor HTTP y que el proceso termine.
+let httpServer = null;
+module.exports = { getHttpServer: () => httpServer };

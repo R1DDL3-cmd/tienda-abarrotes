@@ -2,30 +2,64 @@ const express = require('express');
 const { getDB } = require('../db');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 const { predictProduct, predictAll, predictByCategory, getExecutiveSummary } = require('../services/predictions');
+const { businessToday, businessNow, bizDate } = require('../bizdate');
 
 const router = express.Router();
 
+// Efectivo que DEBERÍA haber en el cajón: apertura + solo los movimientos que
+// mueven billetes de verdad. Antes el esperado era "apertura + TODAS las
+// ventas − TODOS los gastos", que trataba tarjeta/transferencia/fiado como si
+// fueran efectivo e ignoraba por completo los retiros y los abonos de
+// clientes — por eso el corte casi nunca cuadraba.
+//
+// Se calcula desde cash_movements (que desde esta versión registran solo el
+// efectivo neto por venta, ver routes/sales.js). Se excluyen los movimientos
+// de merma ('waste' y 'return' con reference_type='waste'): son pérdida de
+// mercancía, no dinero que salga del cajón.
+function computeExpectedCash(db, register) {
+  const t = db.prepare(
+    `SELECT
+       COALESCE(SUM(CASE WHEN type = 'sale' THEN amount END), 0) AS sales_cash,
+       COALESCE(SUM(CASE WHEN type = 'payment' THEN amount END), 0) AS customer_payments_cash,
+       COALESCE(SUM(CASE WHEN type = 'expense' THEN amount END), 0) AS expenses_cash,
+       COALESCE(SUM(CASE WHEN type = 'return' AND reference_type = 'sale_cancel' THEN amount END), 0) AS sale_refunds,
+       COALESCE(SUM(CASE WHEN type = 'withdrawal' THEN amount END), 0) AS withdrawals,
+       COALESCE(SUM(CASE WHEN type = 'cancel_withdrawal' THEN amount END), 0) AS cancelled_withdrawals
+     FROM cash_movements WHERE cash_register_id = ?`
+  ).get(register.id);
+
+  // sale_refunds ya viene con signo negativo (se inserta como -efectivo devuelto)
+  const expected = (register.opening_amount || 0)
+    + t.sales_cash
+    + t.customer_payments_cash
+    + t.sale_refunds
+    - t.expenses_cash
+    - (t.withdrawals - t.cancelled_withdrawals);
+
+  return { expected: Math.round(expected * 100) / 100, breakdown: t };
+}
+
 router.get('/dashboard', authMiddleware, (req, res) => {
   const db = getDB();
-  const today = new Date().toISOString().split('T')[0];
-  const now = new Date();
+  const today = businessToday();
+  const now = businessNow();
   const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate() - 7);
   const monthAgo = new Date(now); monthAgo.setMonth(monthAgo.getMonth() - 1);
 
   const todaySales = db.prepare(
-    "SELECT COALESCE(COUNT(*), 0) as count, COALESCE(SUM(total), 0) as total FROM sales WHERE date(created_at) = ? AND status = 'completed'"
+    `SELECT COALESCE(COUNT(*), 0) as count, COALESCE(SUM(total), 0) as total FROM sales WHERE ${bizDate('created_at')} = ? AND status = 'completed'`
   ).get(today);
 
   const weekSales = db.prepare(
-    "SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE date(created_at) >= ? AND status = 'completed'"
+    `SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE ${bizDate('created_at')} >= ? AND status = 'completed'`
   ).get(weekAgo.toISOString().split('T')[0]);
 
   const monthSales = db.prepare(
-    "SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE date(created_at) >= ? AND status = 'completed'"
+    `SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE ${bizDate('created_at')} >= ? AND status = 'completed'`
   ).get(monthAgo.toISOString().split('T')[0]);
 
   const todayExpenses = db.prepare(
-    "SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE date(created_at) = ?"
+    `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE ${bizDate('created_at')} = ?`
   ).get(today);
 
   const lowStockCount = db.prepare(
@@ -35,14 +69,14 @@ router.get('/dashboard', authMiddleware, (req, res) => {
   const productsSold = db.prepare(
     `SELECT si.product_name, SUM(si.quantity) as total_qty, SUM(si.subtotal) as total_revenue
      FROM sale_items si JOIN sales s ON si.sale_id = s.id
-     WHERE date(s.created_at) >= ? AND s.status = 'completed'
+     WHERE ${bizDate('s.created_at')} >= ? AND s.status = 'completed'
      GROUP BY si.product_id ORDER BY total_qty DESC LIMIT 10`
   ).all(monthAgo.toISOString().split('T')[0]);
 
   const dailySales = db.prepare(
-    `SELECT date(created_at) as date, COUNT(*) as count, SUM(total) as total
-     FROM sales WHERE date(created_at) >= ? AND status = 'completed'
-     GROUP BY date(created_at) ORDER BY date ASC`
+    `SELECT ${bizDate('created_at')} as date, COUNT(*) as count, SUM(total) as total
+     FROM sales WHERE ${bizDate('created_at')} >= ? AND status = 'completed'
+     GROUP BY ${bizDate('created_at')} ORDER BY date ASC`
   ).all(monthAgo.toISOString().split('T')[0]);
 
   res.json({
@@ -58,22 +92,22 @@ router.get('/dashboard', authMiddleware, (req, res) => {
 
 router.get('/cash-register', authMiddleware, (req, res) => {
   const db = getDB();
-  const today = new Date().toISOString().split('T')[0];
-  const register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(today);
+  const today = businessToday();
+  let register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(today);
 
   const todaySales = db.prepare(
-    "SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE date(created_at) = ? AND status = 'completed'"
+    `SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE ${bizDate('created_at')} = ? AND status = 'completed'`
   ).get(today);
 
   const salesByUser = db.prepare(
     `SELECT COALESCE(u.name, 'Usuario') as name, COALESCE(SUM(s.total), 0) as total, COUNT(s.id) as count
      FROM sales s LEFT JOIN users u ON s.created_by = u.id
-     WHERE date(s.created_at) = ? AND s.status = 'completed'
+     WHERE ${bizDate('s.created_at')} = ? AND s.status = 'completed'
      GROUP BY s.created_by ORDER BY total DESC`
   ).all(today);
 
   const todayExpenses = db.prepare(
-    "SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE date(created_at) = ?"
+    `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE ${bizDate('created_at')} = ?`
   ).get(today);
 
   if (!register) {
@@ -81,15 +115,18 @@ router.get('/cash-register', authMiddleware, (req, res) => {
     db.prepare(
       'INSERT INTO cash_register (date, opening_amount, status, opened_by, opened_at) VALUES (?, 0, ?, ?, datetime("now"))'
     ).run(today, 'open', admin ? admin.id : 1);
-    const newReg = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(today);
-    return res.json({ ...newReg, totalSales: todaySales.total, salesByUser, totalExpenses: todayExpenses.total });
+    register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(today);
   }
-  res.json({ ...register, totalSales: todaySales.total, salesByUser, totalExpenses: todayExpenses.total });
+  // expectedCash: el efectivo que debería haber en el cajón AHORA — es lo que
+  // el POS usa para avisar si el conteo al cerrar no cuadra. totalSales sigue
+  // siendo el total del día con todos los métodos de pago (informativo).
+  const { expected } = computeExpectedCash(db, register);
+  res.json({ ...register, totalSales: todaySales.total, salesByUser, totalExpenses: todayExpenses.total, expectedCash: expected });
 });
 
 router.put('/cash-register', authMiddleware, (req, res) => {
   const db = getDB();
-  const today = new Date().toISOString().split('T')[0];
+  const today = businessToday();
   const { opening_amount, closing_amount, notes } = req.body;
   const userName = req.user.name || '';
 
@@ -104,13 +141,15 @@ router.put('/cash-register', authMiddleware, (req, res) => {
        VALUES (?, 'opening', ?, ?, 'cash_register', ?, ?, datetime("now"))`
     ).run(result.lastInsertRowid, `Apertura de caja — $${parseFloat(opening_amount || 0).toFixed(2)} por ${userName}`, opening_amount || 0, req.user.id, userName);
   } else if (closing_amount !== undefined) {
+    // Totales del día (todos los métodos de pago) — informativos, para el
+    // historial. El esperado del cajón se calcula aparte, solo con efectivo.
     const todaySales = db.prepare(
-      "SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE date(created_at) = ? AND status = 'completed'"
+      `SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE ${bizDate('created_at')} = ? AND status = 'completed'`
     ).get(today);
     const todayExpenses = db.prepare(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE date(created_at) = ?"
+      `SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE ${bizDate('created_at')} = ?`
     ).get(today);
-    const expected = register.opening_amount + todaySales.total - todayExpenses.total;
+    const { expected } = computeExpectedCash(db, register);
     const difference = closing_amount - expected;
     db.prepare(
       'UPDATE cash_register SET closing_amount = ?, expected_amount = ?, difference = ?, total_sales = ?, total_expenses = ?, status = ?, closed_by = ?, closed_at = datetime("now"), notes = ? WHERE id = ?'
@@ -139,19 +178,19 @@ router.get('/history', authMiddleware, (req, res) => {
   const params = [];
   let salesWhere = "status = 'completed'";
   let expWhere = '';
-  if (dateFrom) { salesWhere += ' AND date(created_at) >= ?'; expWhere += ' AND date(created_at) >= ?'; params.push(dateFrom); }
-  if (dateTo) { salesWhere += ' AND date(created_at) <= ?'; expWhere += ' AND date(created_at) <= ?'; params.push(dateTo); }
+  if (dateFrom) { salesWhere += ` AND ${bizDate('created_at')} >= ?`; expWhere += ` AND ${bizDate('created_at')} >= ?`; params.push(dateFrom); }
+  if (dateTo) { salesWhere += ` AND ${bizDate('created_at')} <= ?`; expWhere += ` AND ${bizDate('created_at')} <= ?`; params.push(dateTo); }
 
   const sales = db.prepare(
-    `SELECT date(created_at) as date, COUNT(*) as count, SUM(total) as total
+    `SELECT ${bizDate('created_at')} as date, COUNT(*) as count, SUM(total) as total
      FROM sales WHERE ${salesWhere}
-     GROUP BY date(created_at) ORDER BY date DESC`
+     GROUP BY ${bizDate('created_at')} ORDER BY date DESC`
   ).all(...params);
 
   const expenses = db.prepare(
-    `SELECT date(created_at) as date, COUNT(*) as count, SUM(amount) as total
+    `SELECT ${bizDate('created_at')} as date, COUNT(*) as count, SUM(amount) as total
      FROM expenses${expWhere ? ' WHERE ' + expWhere.substring(4) : ''}
-     GROUP BY date(created_at) ORDER BY date DESC`
+     GROUP BY ${bizDate('created_at')} ORDER BY date DESC`
   ).all(...params);
 
   const regParams = [];
@@ -174,8 +213,8 @@ router.get('/expenses', authMiddleware, (req, res) => {
 
   let where = 'WHERE 1=1';
   const params = [];
-  if (dateFrom) { where += ' AND date(created_at) >= ?'; params.push(dateFrom); }
-  if (dateTo) { where += ' AND date(created_at) <= ?'; params.push(dateTo); }
+  if (dateFrom) { where += ` AND ${bizDate('created_at')} >= ?`; params.push(dateFrom); }
+  if (dateTo) { where += ` AND ${bizDate('created_at')} <= ?`; params.push(dateTo); }
 
   const countResult = db.prepare(`SELECT COUNT(*) as total FROM expenses ${where}`).get(...params);
   const expenses = db.prepare(
@@ -201,9 +240,12 @@ router.post('/expenses', authMiddleware, (req, res) => {
     if (!expense) return res.status(500).json({ error: 'Error al recuperar el gasto' });
 
     const user = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
-    const today = new Date().toISOString().split('T')[0];
+    const today = businessToday();
     const register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(today);
-    if (register) {
+    // Solo los gastos pagados en efectivo sacan billetes del cajón; un gasto
+    // con tarjeta/transferencia no debe afectar el efectivo esperado del corte.
+    const method = payment_method || 'cash';
+    if (register && method === 'cash') {
       db.prepare(
         `INSERT INTO cash_movements (cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at)
          VALUES (?, 'expense', ?, ?, ?, 'expense', ?, ?, datetime("now"))`
@@ -219,8 +261,27 @@ router.post('/expenses', authMiddleware, (req, res) => {
 
 router.delete('/expenses/:id', authMiddleware, adminMiddleware, (req, res) => {
   const db = getDB();
-  db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
+  const expense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(req.params.id);
+  if (!expense) return res.status(404).json({ error: 'Gasto no encontrado' });
+
+  // Borrar el gasto sin quitar su movimiento de caja dejaba el efectivo
+  // esperado del corte desalineado para siempre. Los gastos generados por una
+  // compra a proveedor registran su movimiento con reference_type='purchase'.
+  const transaction = db.transaction(() => {
+    db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
+    if (expense.reference_type === 'purchase' && expense.reference_id) {
+      db.prepare("DELETE FROM cash_movements WHERE type = 'expense' AND reference_type = 'purchase' AND reference_id = ?").run(expense.reference_id);
+    } else {
+      db.prepare("DELETE FROM cash_movements WHERE type = 'expense' AND reference_type = 'expense' AND reference_id = ?").run(expense.id);
+    }
+  });
+
+  try {
+    transaction();
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Error al eliminar gasto: ' + e.message });
+  }
 });
 
 router.get('/top-products', authMiddleware, (req, res) => {
@@ -228,8 +289,8 @@ router.get('/top-products', authMiddleware, (req, res) => {
   const { dateFrom, dateTo, limit: qLimit = 20 } = req.query;
   let where = "WHERE s.status = 'completed'";
   const params = [];
-  if (dateFrom) { where += ' AND date(s.created_at) >= ?'; params.push(dateFrom); }
-  if (dateTo) { where += ' AND date(s.created_at) <= ?'; params.push(dateTo); }
+  if (dateFrom) { where += ` AND ${bizDate('s.created_at')} >= ?`; params.push(dateFrom); }
+  if (dateTo) { where += ` AND ${bizDate('s.created_at')} <= ?`; params.push(dateTo); }
 
   const products = db.prepare(
     `SELECT si.product_name, SUM(si.quantity) as total_qty, SUM(si.subtotal) as total_revenue
@@ -247,8 +308,8 @@ router.get('/profit', authMiddleware, (req, res) => {
     const params = [];
     let salesWhere = "s.status = 'completed'";
     let expWhere = '';
-    if (dateFrom) { salesWhere += ' AND date(s.created_at) >= ?'; expWhere += ' AND date(created_at) >= ?'; params.push(dateFrom); }
-    if (dateTo) { salesWhere += ' AND date(s.created_at) <= ?'; expWhere += ' AND date(created_at) <= ?'; params.push(dateTo); }
+    if (dateFrom) { salesWhere += ` AND ${bizDate('s.created_at')} >= ?`; expWhere += ` AND ${bizDate('created_at')} >= ?`; params.push(dateFrom); }
+    if (dateTo) { salesWhere += ` AND ${bizDate('s.created_at')} <= ?`; expWhere += ` AND ${bizDate('created_at')} <= ?`; params.push(dateTo); }
 
     const revenue = db.prepare(`SELECT COALESCE(SUM(total), 0) as total FROM sales s WHERE ${salesWhere}`).get(...params);
     // Una venta individual (ej. cigarros sueltos) vende PIEZAS, pero
@@ -288,8 +349,8 @@ router.get('/cash-movements', authMiddleware, (req, res) => {
   const { dateFrom, dateTo, type, limit: qLimit = 100 } = req.query;
   let where = 'WHERE 1=1';
   const params = [];
-  if (dateFrom) { where += ' AND date(cm.created_at) >= ?'; params.push(dateFrom); }
-  if (dateTo) { where += ' AND date(cm.created_at) <= ?'; params.push(dateTo); }
+  if (dateFrom) { where += ` AND ${bizDate('cm.created_at')} >= ?`; params.push(dateFrom); }
+  if (dateTo) { where += ` AND ${bizDate('cm.created_at')} <= ?`; params.push(dateTo); }
   if (type) { where += ' AND cm.type = ?'; params.push(type); }
   const movements = db.prepare(
     `SELECT cm.*, cr.date as register_date FROM cash_movements cm
@@ -326,7 +387,7 @@ router.post('/product-waste', authMiddleware, adminMiddleware, (req, res) => {
          VALUES (?, 'out', ?, ?, ?, 'waste', ?, ?, ?)`
       ).run(product_id, parseFloat(quantity), stockBefore, stockAfter, result.lastInsertRowid, notes || reason.trim(), req.user.id);
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = businessToday();
       const register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(today);
       if (register) {
         db.prepare(
@@ -350,8 +411,8 @@ router.get('/product-waste', authMiddleware, (req, res) => {
   const { dateFrom, dateTo, waste_type, limit: qLimit = 50 } = req.query;
   let where = 'WHERE 1=1';
   const params = [];
-  if (dateFrom) { where += ' AND date(pw.created_at) >= ?'; params.push(dateFrom); }
-  if (dateTo) { where += ' AND date(pw.created_at) <= ?'; params.push(dateTo); }
+  if (dateFrom) { where += ` AND ${bizDate('pw.created_at')} >= ?`; params.push(dateFrom); }
+  if (dateTo) { where += ` AND ${bizDate('pw.created_at')} <= ?`; params.push(dateTo); }
   if (waste_type) { where += ' AND pw.waste_type = ?'; params.push(waste_type); }
   const waste = db.prepare(
     `SELECT pw.*, p.name as product_name, p.barcode, u.name as created_by_name
@@ -365,7 +426,7 @@ router.get('/product-waste', authMiddleware, (req, res) => {
 // Session endpoints (per-user cash handover)
 router.get('/my-session', authMiddleware, (req, res) => {
   const db = getDB();
-  const today = new Date().toISOString().split('T')[0];
+  const today = businessToday();
   const session = db.prepare(
     "SELECT * FROM cash_sessions WHERE date = ? AND user_id = ? AND status = 'open'"
   ).get(today, req.user.id);
@@ -374,7 +435,7 @@ router.get('/my-session', authMiddleware, (req, res) => {
 
 router.post('/sessions', authMiddleware, (req, res) => {
   const db = getDB();
-  const today = new Date().toISOString().split('T')[0];
+  const today = businessToday();
   const { opening_amount } = req.body;
 
   // Close any existing open session for this user today
@@ -414,6 +475,11 @@ router.put('/sessions/:id/close', authMiddleware, (req, res) => {
   const { closing_amount } = req.body;
   const session = db.prepare("SELECT * FROM cash_sessions WHERE id = ?").get(req.params.id);
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
+  // Cada quien cierra SU turno (o el admin cualquiera): antes cualquier
+  // usuario podía cerrar la sesión de caja de otro con cualquier monto.
+  if (session.user_id !== req.user.id && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Solo puedes cerrar tu propio turno' });
+  }
 
   db.prepare(
     "UPDATE cash_sessions SET status = 'closed', closed_at = datetime('now'), closing_amount = ? WHERE id = ?"
@@ -443,9 +509,9 @@ router.put('/sessions/:id/close', authMiddleware, (req, res) => {
 // Withdrawal endpoints
 router.get('/withdrawals', authMiddleware, (req, res) => {
   const db = getDB();
-  const today = new Date().toISOString().split('T')[0];
+  const today = businessToday();
   const withdrawals = db.prepare(
-    `SELECT * FROM cash_movements WHERE type = 'withdrawal' AND date(created_at) = ? ORDER BY created_at DESC`
+    `SELECT * FROM cash_movements WHERE type = 'withdrawal' AND ${bizDate('created_at')} = ? ORDER BY created_at DESC`
   ).all(today);
   res.json({ withdrawals });
 });
@@ -456,7 +522,7 @@ router.post('/withdrawals', authMiddleware, (req, res) => {
     const { amount, reason } = req.body;
     if (!amount || parseFloat(amount) <= 0) return res.status(400).json({ error: 'Monto inválido' });
     if (!reason || !reason.trim()) return res.status(400).json({ error: 'Motivo obligatorio' });
-    const today = new Date().toISOString().split('T')[0];
+    const today = businessToday();
     const register = db.prepare("SELECT id FROM cash_register WHERE date = ?").get(today);
     if (!register) return res.status(400).json({ error: 'No hay caja abierta hoy' });
     const result = db.prepare(
@@ -470,12 +536,18 @@ router.post('/withdrawals', authMiddleware, (req, res) => {
   }
 });
 
-router.put('/withdrawals/:id/cancel', authMiddleware, (req, res) => {
+// Solo admin: cancelar un retiro "regresa" efectivo al esperado del corte —
+// en manos de cualquier usuario permitía maquillar faltantes.
+router.put('/withdrawals/:id/cancel', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const original = db.prepare("SELECT * FROM cash_movements WHERE id = ? AND type = 'withdrawal'").get(req.params.id);
     if (!original) return res.status(404).json({ error: 'Retiro no encontrado' });
-    const today = new Date().toISOString().split('T')[0];
+    const alreadyCancelled = db.prepare(
+      "SELECT id FROM cash_movements WHERE type = 'cancel_withdrawal' AND reference_id = ?"
+    ).get(original.id);
+    if (alreadyCancelled) return res.status(400).json({ error: 'Este retiro ya fue cancelado' });
+    const today = businessToday();
     const register = db.prepare("SELECT id FROM cash_register WHERE date = ?").get(today);
     if (!register) return res.status(400).json({ error: 'No hay caja abierta hoy' });
     const result = db.prepare(

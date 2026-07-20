@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const { getDB } = require('./db');
+const { businessToday } = require('./bizdate');
 
 function importProductsFromExcel(db) {
   try {
@@ -112,11 +113,13 @@ function seedDatabase() {
   }
 
   const prodCount = db.prepare('SELECT COUNT(*) as count FROM products').get();
-  if (prodCount.count === 0) {
+  // SKIP_SEED_IMPORT: los tests arrancan el servidor contra una BD temporal y
+  // no necesitan (ni quieren) cargar el catálogo real de productos.xlsx.
+  if (prodCount.count === 0 && process.env.SKIP_SEED_IMPORT !== 'true') {
     importProductsFromExcel(db);
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = businessToday();
   const existingRegister = db.prepare('SELECT id FROM cash_register WHERE date = ?').get(today);
   if (!existingRegister) {
     const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get();

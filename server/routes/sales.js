@@ -1,8 +1,22 @@
 const express = require('express');
 const { getDB } = require('../db');
-const { authMiddleware } = require('../middleware/auth');
+const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { businessToday, bizDate } = require('../bizdate');
 
 const router = express.Router();
+
+const VALID_PAYMENT_METHODS = ['cash', 'card', 'transfer', 'credit', 'fiado'];
+
+// Efectivo que realmente entra al cajón con esta venta: lo pagado en efectivo
+// menos el cambio entregado. El POS manda el efectivo RECIBIDO (puede exceder
+// el total — el excedente es cambio y sale del mismo cajón), y el cambio
+// siempre se da en efectivo. Tarjeta/transferencia/fiado no tocan el cajón.
+function computeCashNet(payments, total) {
+  const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const cashPaid = payments.filter(p => p.method === 'cash').reduce((sum, p) => sum + (p.amount || 0), 0);
+  const changeGiven = Math.max(0, totalPaid - total);
+  return Math.max(0, cashPaid - changeGiven);
+}
 
 // El ticket impreso necesita mostrar el saldo pendiente del cliente cuando la
 // venta fue a crédito/fiado, no solo el total de esta venta — de lo contrario
@@ -40,10 +54,32 @@ router.post('/', authMiddleware, (req, res) => {
 
   const isCashier = req.user.role === 'cashier';
 
+  // Validación estricta de números: !item.quantity solo rechazaba 0 — una
+  // cantidad NEGATIVA pasaba, lo que AUMENTABA el stock y generaba una venta
+  // con total negativo. Lo mismo aplicaba a precios y descuentos.
+  for (const p of payments) {
+    if (!VALID_PAYMENT_METHODS.includes(p.method)) {
+      return res.status(400).json({ error: 'Método de pago inválido' });
+    }
+    p.amount = Number(p.amount);
+    if (!Number.isFinite(p.amount) || p.amount < 0) {
+      return res.status(400).json({ error: 'Monto de pago inválido' });
+    }
+  }
+
   let subtotal = 0;
   for (const item of items) {
-    if (!item.product_id || !item.quantity || !item.unit_price) {
-      return res.status(400).json({ error: 'Datos de producto incompletos' });
+    item.quantity = Number(item.quantity);
+    item.unit_price = Number(item.unit_price);
+    item.discount = Number(item.discount) || 0;
+    if (!item.product_id || !Number.isFinite(item.quantity) || item.quantity <= 0) {
+      return res.status(400).json({ error: 'Cantidad de producto inválida' });
+    }
+    if (!Number.isFinite(item.unit_price) || item.unit_price <= 0) {
+      return res.status(400).json({ error: 'Precio de producto inválido' });
+    }
+    if (item.discount < 0 || item.discount > item.unit_price * item.quantity) {
+      return res.status(400).json({ error: 'Descuento de producto inválido' });
     }
     const product = db.prepare('SELECT * FROM products WHERE id = ? AND active = 1').get(item.product_id);
     if (!product) {
@@ -76,16 +112,17 @@ router.post('/', authMiddleware, (req, res) => {
     subtotal += item.subtotal;
   }
 
-  if (isCashier && discount > 0) {
+  const globalDiscount = Number(discount) || 0;
+  if (globalDiscount < 0 || globalDiscount > subtotal) {
+    return res.status(400).json({ error: 'Descuento global inválido' });
+  }
+
+  if (isCashier && globalDiscount > 0) {
     return res.status(403).json({ error: 'El cajero no puede aplicar descuentos globales' });
   }
 
   if (isCashier && payments.some(p => p.method === 'credit' || p.method === 'fiado')) {
     return res.status(403).json({ error: 'El cajero no puede vender a crédito/fiado' });
-  }
-
-  if (payments.some(p => p.method === 'mixed')) {
-    return res.status(400).json({ error: 'Método de pago inválido' });
   }
 
   if (payments.some(p => p.method === 'credit' || p.method === 'fiado')) {
@@ -103,15 +140,33 @@ router.post('/', authMiddleware, (req, res) => {
     }
   }
 
-  const total = subtotal - discount;
+  const total = subtotal - globalDiscount;
   let totalPayments = 0;
   for (const p of payments) {
     totalPayments += p.amount || 0;
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  // Los pagos deben cubrir el total. Antes totalPayments se calculaba y NUNCA
+  // se validaba: se podían registrar ventas con pagos que no cuadraban.
+  // El excedente solo es válido si hay efectivo (es el cambio del cliente).
+  const EPS = 0.01;
+  if (totalPayments < total - EPS) {
+    return res.status(400).json({ error: 'Los pagos no cubren el total de la venta' });
+  }
+  const hasCash = payments.some(p => p.method === 'cash');
+  if (!hasCash && totalPayments > total + EPS) {
+    return res.status(400).json({ error: 'El pago excede el total (solo se da cambio en pagos con efectivo)' });
+  }
+  const totalCredit = payments.filter(p => p.method === 'credit' || p.method === 'fiado').reduce((sum, p) => sum + p.amount, 0);
+  if (totalCredit > total + EPS) {
+    return res.status(400).json({ error: 'El monto a fiado no puede exceder el total de la venta' });
+  }
+
+  const cashNet = computeCashNet(payments, total);
+
+  const today = businessToday();
   const register = db.prepare("SELECT * FROM cash_register WHERE date = ? AND status = 'open'").get(today);
-  if (!register && payments.some(p => p.method === 'cash')) {
+  if (!register && cashNet > 0) {
     db.prepare(
       'INSERT INTO cash_register (date, opening_amount, status, opened_by, opened_at) VALUES (?, 0, ?, ?, datetime("now"))'
     ).run(today, 'open', req.user.id);
@@ -138,7 +193,7 @@ router.post('/', authMiddleware, (req, res) => {
   const paymentMethods = payments.map(p => `${p.method}: $${p.amount.toFixed(2)}`).join(', ');
 
   const transaction = db.transaction(() => {
-    const saleResult = insertSale.run(total, discount, paymentMethods, JSON.stringify(payments), customer_id || null, customer_name || null, req.user.id, req.user.name, client_id || null, client_created_at || null);
+    const saleResult = insertSale.run(total, globalDiscount, paymentMethods, JSON.stringify(payments), customer_id || null, customer_name || null, req.user.id, req.user.name, client_id || null, client_created_at || null);
     const saleId = saleResult.lastInsertRowid;
 
     for (const item of items) {
@@ -160,13 +215,19 @@ router.post('/', authMiddleware, (req, res) => {
       }
     }
 
+    // El movimiento de caja registra SOLO el efectivo neto que entró al
+    // cajón, no el total de la venta: una venta pagada con tarjeta o fiado
+    // no mete billetes al cajón, y antes se registraba el total completo —
+    // por eso el "efectivo esperado" del corte salía inflado y la diferencia
+    // parecía un faltante.
     const register = db.prepare("SELECT * FROM cash_register WHERE date = ? AND status = 'open'").get(today);
-    if (register) {
+    if (register && cashNet > 0) {
       const itemsDesc = items.map(i => `${i.product_name} x${i.quantity}`).join(', ');
+      const cashLabel = Math.abs(cashNet - total) > 0.009 ? ` (efectivo: $${cashNet.toFixed(2)})` : '';
       db.prepare(
         `INSERT INTO cash_movements (cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at)
          VALUES (?, 'sale', ?, ?, ?, 'sale', ?, ?, datetime("now"))`
-      ).run(register.id, `Venta #${saleId} — ${itemsDesc} | Total: $${total.toFixed(2)}`, total, saleId, req.user.id, req.user.name || '');
+      ).run(register.id, `Venta #${saleId} — ${itemsDesc} | Total: $${total.toFixed(2)}${cashLabel}`, cashNet, saleId, req.user.id, req.user.name || '');
     }
 
     return saleId;
@@ -194,8 +255,8 @@ router.get('/', authMiddleware, (req, res) => {
   let where = 'WHERE 1=1';
   const params = [];
 
-  if (dateFrom) { where += ' AND date(s.created_at) >= ?'; params.push(dateFrom); }
-  if (dateTo) { where += ' AND date(s.created_at) <= ?'; params.push(dateTo); }
+  if (dateFrom) { where += ` AND ${bizDate('s.created_at')} >= ?`; params.push(dateFrom); }
+  if (dateTo) { where += ` AND ${bizDate('s.created_at')} <= ?`; params.push(dateTo); }
   if (status) { where += ' AND s.status = ?'; params.push(status); }
 
   const countResult = db.prepare(`SELECT COUNT(*) as total FROM sales s ${where}`).get(...params);
@@ -212,10 +273,10 @@ router.get('/', authMiddleware, (req, res) => {
 
 router.get('/today', authMiddleware, (req, res) => {
   const db = getDB();
-  const today = new Date().toISOString().split('T')[0];
+  const today = businessToday();
 
   const sales = db.prepare(
-    `SELECT s.* FROM sales s WHERE date(s.created_at) = ? AND s.status = 'completed' ORDER BY s.created_at DESC`
+    `SELECT s.* FROM sales s WHERE ${bizDate('s.created_at')} = ? AND s.status = 'completed' ORDER BY s.created_at DESC`
   ).all(today);
 
   for (const sale of sales) {
@@ -223,7 +284,7 @@ router.get('/today', authMiddleware, (req, res) => {
   }
 
   const totals = db.prepare(
-    `SELECT COUNT(*) as count, COALESCE(SUM(total), 0) as total_sales FROM sales WHERE date(created_at) = ? AND status = 'completed'`
+    `SELECT COUNT(*) as count, COALESCE(SUM(total), 0) as total_sales FROM sales WHERE ${bizDate('created_at')} = ? AND status = 'completed'`
   ).get(today);
 
   res.json({ sales, totals });
@@ -234,8 +295,8 @@ router.get('/export', authMiddleware, (req, res) => {
   const { dateFrom, dateTo } = req.query;
   let where = "WHERE s.status = 'completed'";
   const params = [];
-  if (dateFrom) { where += ' AND date(s.created_at) >= ?'; params.push(dateFrom); }
-  if (dateTo) { where += ' AND date(s.created_at) <= ?'; params.push(dateTo); }
+  if (dateFrom) { where += ` AND ${bizDate('s.created_at')} >= ?`; params.push(dateFrom); }
+  if (dateTo) { where += ` AND ${bizDate('s.created_at')} <= ?`; params.push(dateTo); }
 
   const page = parseInt(req.query.page) || 1;
   const limit = Math.min(parseInt(req.query.limit) || 500, 5000);
@@ -282,7 +343,11 @@ router.get('/:id', authMiddleware, (req, res) => {
   res.json(attachCustomerBalance(db, sale));
 });
 
-router.post('/:id/cancel', authMiddleware, (req, res) => {
+// Solo admin: la cancelación revierte stock y devuelve efectivo del cajón —
+// dejarla abierta a cualquier usuario autenticado era un vector de robo
+// clásico en POS (vender, cobrar, cancelar y quedarse el efectivo). La UI ya
+// ocultaba el botón a cajeros; esto lo hace obligatorio también en el API.
+router.post('/:id/cancel', authMiddleware, adminMiddleware, (req, res) => {
   const db = getDB();
   const { reason } = req.body;
   if (!reason) return res.status(400).json({ error: 'Motivo de cancelación requerido' });
@@ -321,14 +386,31 @@ router.post('/:id/cancel', authMiddleware, (req, res) => {
       }
     }
 
-    // Reflejar la cancelación en el corte de caja del día en que se hizo la venta original
-    const saleDate = sale.created_at.split(' ')[0].split('T')[0];
-    const register = db.prepare("SELECT * FROM cash_register WHERE date = ?").get(saleDate);
-    if (register) {
+    // El reembolso en efectivo sale del cajón de HOY (que es cuando el dinero
+    // se devuelve físicamente), no del día de la venta original: insertar
+    // movimientos en un corte ya cerrado alteraba silenciosamente cortes
+    // históricos sin recalcular nada. Y solo se refleja la parte que entró en
+    // efectivo — cancelar una venta con tarjeta no saca billetes del cajón.
+    let refundCash = sale.total;
+    try {
+      const salePayments = sale.payment_details ? JSON.parse(sale.payment_details) : [];
+      if (Array.isArray(salePayments) && salePayments.length > 0) {
+        refundCash = computeCashNet(salePayments, sale.total);
+      }
+    } catch (e) {}
+    if (refundCash > 0) {
+      const today = businessToday();
+      let register = db.prepare("SELECT * FROM cash_register WHERE date = ? AND status = 'open'").get(today);
+      if (!register) {
+        const ins = db.prepare(
+          'INSERT INTO cash_register (date, opening_amount, status, opened_by, opened_at) VALUES (?, 0, ?, ?, datetime("now"))'
+        ).run(today, 'open', req.user.id);
+        register = db.prepare('SELECT * FROM cash_register WHERE id = ?').get(ins.lastInsertRowid);
+      }
       db.prepare(
         `INSERT INTO cash_movements (cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at)
          VALUES (?, 'return', ?, ?, ?, 'sale_cancel', ?, ?, datetime("now"))`
-      ).run(register.id, `Cancelación de venta #${sale.id} — ${reason}`, -sale.total, sale.id, req.user.id, req.user.name || '');
+      ).run(register.id, `Cancelación de venta #${sale.id} — ${reason}`, -refundCash, sale.id, req.user.id, req.user.name || '');
     }
   });
 

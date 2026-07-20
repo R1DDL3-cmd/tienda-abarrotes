@@ -575,14 +575,15 @@ export default function POS({ user, onLogout }) {
     setShowEndDayModal(true)
   }
 
-  // El efectivo esperado se calcula igual que el backend (server/routes/
-  // accounting.js): apertura + ventas - gastos. Si el monto contado se aleja
-  // mucho de eso, se pide confirmar antes de guardarlo — antes se aceptaba
-  // cualquier valor (incluido $0 con efectivo real en caja) sin avisar nada,
-  // lo que podía esconder un faltante real o un error de captura.
+  // El efectivo esperado lo calcula el backend (expectedCash en GET
+  // /accounting/cash-register): apertura + solo movimientos de efectivo real
+  // (ventas cash netas de cambio, abonos, gastos cash, retiros). Si el monto
+  // contado se aleja mucho de eso, se pide confirmar antes de guardarlo.
   const confirmCashAmount = async (amount) => {
     if (!registerData) return true
-    const expected = parseFloat(registerData.opening_amount || 0) + parseFloat(registerData.totalSales || 0) - parseFloat(registerData.totalExpenses || 0)
+    const expected = registerData.expectedCash !== undefined
+      ? parseFloat(registerData.expectedCash || 0)
+      : parseFloat(registerData.opening_amount || 0) + parseFloat(registerData.totalSales || 0) - parseFloat(registerData.totalExpenses || 0)
     if (Math.abs(amount - expected) <= 1) return true
     return confirmDialog(`El efectivo esperado en caja es ${formatMoney(expected)}, pero ingresaste ${formatMoney(amount)} (diferencia de ${formatMoney(amount - expected)}). ¿Confirmas que ese es el efectivo real contado?`)
   }
@@ -1191,7 +1192,9 @@ export default function POS({ user, onLogout }) {
                         <td>{'$' + parseFloat(w.amount).toFixed(2)}</td>
                         <td style={{fontSize:'0.85rem'}}>{w.description.replace(/^Retiro de efectivo[^—]*—\s*/, '')}</td>
                         <td>
-                          <button className="btn btn-sm btn-danger" onClick={() => handleCancelWithdrawal(w.id)}>Cancelar</button>
+                          {user?.role === 'admin' && (
+                            <button className="btn btn-sm btn-danger" onClick={() => handleCancelWithdrawal(w.id)}>Cancelar</button>
+                          )}
                         </td>
                       </tr>
                     ))}

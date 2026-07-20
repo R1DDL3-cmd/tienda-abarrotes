@@ -8,16 +8,28 @@ let SQL = null;
 let _saveTimeout = null;
 let _savePending = false;
 
+// Escritura atómica: sql.js reescribe el archivo COMPLETO en cada guardado,
+// así que un corte de luz a mitad de un writeFileSync directo sobre tienda.db
+// dejaba la base corrupta (y el respaldo más cercano podía ser de 24h antes).
+// Escribir a un .tmp y renombrar es atómico a nivel de sistema de archivos:
+// o queda la versión anterior completa o la nueva completa, nunca una mezcla.
+function atomicWriteFileSync(filePath, buffer) {
+  const tmpPath = filePath + '.tmp';
+  fs.writeFileSync(tmpPath, buffer);
+  fs.renameSync(tmpPath, filePath);
+}
+
 function debouncedSave() {
   if (_savePending) return;
   _savePending = true;
   _saveTimeout = setTimeout(() => {
     try {
       _savePending = false;
+      _saveTimeout = null;
       if (db && currentDBPath) {
         const data = db.sqlDb.export();
         const buffer = Buffer.from(data);
-        fs.writeFileSync(currentDBPath, buffer);
+        atomicWriteFileSync(currentDBPath, buffer);
       }
     } catch (e) {
       _savePending = false;
@@ -36,12 +48,31 @@ function flushSave() {
     if (db && currentDBPath) {
       const data = db.sqlDb.export();
       const buffer = Buffer.from(data);
-      fs.writeFileSync(currentDBPath, buffer);
+      atomicWriteFileSync(currentDBPath, buffer);
     }
   }
 }
 
+// Descarta cualquier guardado pendiente SIN escribirlo. Necesario antes de
+// reemplazar el archivo .db desde fuera (restore/import de respaldos): un
+// debouncedSave en vuelo podía disparar en la ventana entre copiar el archivo
+// restaurado y recargarlo, sobreescribiéndolo con el estado viejo en memoria.
+function cancelPendingSave() {
+  if (_saveTimeout) {
+    clearTimeout(_saveTimeout);
+    _saveTimeout = null;
+  }
+  _savePending = false;
+}
+
 function computeDBPath() {
+  // Override explícito (tests): permite correr el servidor contra una BD
+  // temporal sin tocar la de desarrollo ni la de producción.
+  if (process.env.TIENDA_DB_PATH) {
+    const dir = path.dirname(process.env.TIENDA_DB_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return process.env.TIENDA_DB_PATH;
+  }
   if (process.env.ELECTRON_RUN === 'true') {
     const appDir = path.join(
       process.env.APPDATA || process.env.HOME || '.',
@@ -156,7 +187,7 @@ class DatabaseWrapper {
   backup(destPath) {
     const data = this.sqlDb.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(destPath, buffer);
+    atomicWriteFileSync(destPath, buffer);
   }
 
   transaction(fn) {
@@ -700,4 +731,15 @@ function reloadDB() {
   flushSave();
 }
 
-module.exports = { initDatabase, getDB, getDBPath: () => currentDBPath, reloadDB };
+module.exports = {
+  initDatabase,
+  getDB,
+  getDBPath: () => currentDBPath,
+  // Carpeta de datos de la instalación (donde vive tienda.db). El secreto JWT
+  // también se guarda aquí: es la única ruta con permiso de escritura
+  // garantizado tanto en dev como en la app empaquetada (el .asar es de solo
+  // lectura — ver middleware/auth.js).
+  getDataDir: () => path.dirname(computeDBPath()),
+  reloadDB,
+  cancelPendingSave,
+};

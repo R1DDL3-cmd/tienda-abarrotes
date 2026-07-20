@@ -94,6 +94,9 @@ npm start
 | admin   | admin123  | Dueno |
 | cajero  | cajero123 | Cajero |
 
+Al iniciar sesion por primera vez con estas contrasenas de fabrica, el sistema
+obliga a cambiarlas antes de entrar.
+
 ## Instalacion en PC destino
 
 1. Ejecutar `dist/Instalar.bat` como administrador
