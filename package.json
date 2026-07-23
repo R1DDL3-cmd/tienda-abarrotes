@@ -2,6 +2,7 @@
   "name": "sistema-tienda-abarrotes",
   "version": "1.0.6",
   "description": "Sistema de Tienda de Abarrotes - POS, Inventario y Contabilidad",
+  "author": "Jacob Parra <jacobparralozano@gmail.com>",
   "main": "electron/main.js",
   "scripts": {
     "dev:server": "node server/index.js",
