@@ -681,6 +681,31 @@ const SCHEMA_MIGRATIONS = [
   (db) => {
     try { db.exec('ALTER TABLE products ADD COLUMN needs_review INTEGER DEFAULT 0'); } catch (e) {}
   },
+  // v12: re-vincular productos a proveedores reales. El import de Excel
+  // escribía solo el texto products.supplier y dejaba supplier_id en NULL;
+  // Compras busca productos por supplier_id, así que para esos productos ni
+  // la búsqueda por proveedor ni "Sugerir productos a reponer" encontraban
+  // nada. Misma reconciliación por nombre que la v9 (que solo corrió una vez
+  // por base — las bases creadas o reimportadas después quedaron sin enlace).
+  // El import ya llena supplier_id de aquí en adelante; esto repara lo ya
+  // importado sin necesidad de reimportar.
+  (db) => {
+    try {
+      const distinctSuppliers = db.prepare(
+        "SELECT DISTINCT TRIM(supplier) as name FROM products WHERE supplier IS NOT NULL AND TRIM(supplier) != '' AND supplier_id IS NULL"
+      ).all();
+      for (const s of distinctSuppliers) {
+        const existing = db.prepare('SELECT id FROM suppliers WHERE LOWER(name) = LOWER(?)').get(s.name);
+        if (!existing) db.prepare('INSERT INTO suppliers (name, notes) VALUES (?, ?)').run(s.name, 'Importado de productos');
+      }
+      const products = db.prepare("SELECT id, supplier FROM products WHERE supplier IS NOT NULL AND TRIM(supplier) != '' AND supplier_id IS NULL").all();
+      const updateSupplierId = db.prepare('UPDATE products SET supplier_id = ? WHERE id = ?');
+      for (const p of products) {
+        const match = db.prepare('SELECT id FROM suppliers WHERE LOWER(name) = LOWER(?)').get(p.supplier.trim());
+        if (match) updateSupplierId.run(match.id, p.id);
+      }
+    } catch (e) {}
+  },
 ];
 
 function getSchemaVersion(db) {

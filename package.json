@@ -1,6 +1,6 @@
 {
   "name": "sistema-tienda-abarrotes",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Sistema de Tienda de Abarrotes - POS, Inventario y Contabilidad",
   "author": "Jacob Parra <jacobparralozano@gmail.com>",
   "main": "electron/main.js",
@@ -12,7 +12,7 @@
     "build": "npm run build:frontend && npx electron-builder",
     "release": "npm run build:frontend && npx electron-builder --publish always",
     "start": "electron .",
-    "test": "node --test server/tests/ && node server/test-transaction-persist.js"
+    "test": "node --test server/tests/*.test.js && node server/test-transaction-persist.js"
   },
   "build": {
     "appId": "com.tienda.abarrotes",

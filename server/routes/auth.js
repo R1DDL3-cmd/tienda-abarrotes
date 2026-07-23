@@ -110,6 +110,15 @@ router.put('/users/:id', authMiddleware, adminMiddleware, (req, res) => {
     const dup = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, req.params.id);
     if (dup) return res.status(400).json({ error: 'El nombre de usuario ya existe' });
   }
+  // Borrar al último admin ya estaba bloqueado, pero cambiarle el rol no:
+  // degradarlo dejaba el sistema sin ningún administrador (sin forma de
+  // gestionar usuarios, respaldos ni configuración).
+  if (role && role !== 'admin' && existing.role === 'admin') {
+    const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get();
+    if (adminCount.count <= 1) {
+      return res.status(400).json({ error: 'No puedes quitarle el rol de administrador al último admin' });
+    }
+  }
   const updates = [];
   const params = [];
   if (username) { updates.push('username = ?'); params.push(username); }

@@ -127,8 +127,23 @@ router.get('/cash-register', authMiddleware, (req, res) => {
 router.put('/cash-register', authMiddleware, (req, res) => {
   const db = getDB();
   const today = businessToday();
-  const { opening_amount, closing_amount, notes } = req.body;
+  let { opening_amount, closing_amount, notes } = req.body;
   const userName = req.user.name || '';
+
+  // El conteo de un cajón físico nunca es negativo ni "abc": validar aquí
+  // evita que un error de captura corrompa el corte con NaN o montos absurdos.
+  if (opening_amount !== undefined) {
+    opening_amount = Number(opening_amount);
+    if (!Number.isFinite(opening_amount) || opening_amount < 0) {
+      return res.status(400).json({ error: 'Monto de apertura inválido' });
+    }
+  }
+  if (closing_amount !== undefined) {
+    closing_amount = Number(closing_amount);
+    if (!Number.isFinite(closing_amount) || closing_amount < 0) {
+      return res.status(400).json({ error: 'Monto de cierre inválido' });
+    }
+  }
 
   const register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(today);
   if (!register) {
@@ -196,6 +211,9 @@ router.get('/history', authMiddleware, (req, res) => {
   const regParams = [];
   let regWhere = "status = 'closed'";
   if (dateFrom) { regWhere += ' AND date >= ?'; regParams.push(dateFrom); }
+  // dateTo faltaba: al filtrar un rango, los cortes posteriores al rango se
+  // colaban igual en el reporte.
+  if (dateTo) { regWhere += ' AND date <= ?'; regParams.push(dateTo); }
   const registers = db.prepare(
     `SELECT * FROM cash_register WHERE ${regWhere} ORDER BY date DESC`
   ).all(...regParams);

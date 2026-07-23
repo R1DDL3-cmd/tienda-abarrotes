@@ -165,6 +165,13 @@ router.post('/', authMiddleware, inventoryAdminMiddleware, (req, res) => {
     if (!name || sale_price === undefined) {
       return res.status(400).json({ error: 'Nombre y precio de venta son requeridos' });
     }
+    // Precios/existencias negativos corrompen ventas, corte y valor de
+    // inventario — se rechazan aquí, no solo en el formulario.
+    for (const [label, val] of [['precio de venta', sale_price], ['precio de compra', purchase_price], ['stock', stock], ['stock mínimo', min_stock]]) {
+      if (val !== undefined && val !== null && val !== '' && (!Number.isFinite(Number(val)) || Number(val) < 0)) {
+        return res.status(400).json({ error: `Valor inválido en ${label}` });
+      }
+    }
 
     // supplier_id es el vínculo real con la tabla suppliers (lo que usa
     // Compras para buscar productos de un proveedor); supplier (texto) se
@@ -239,6 +246,12 @@ router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
 
   const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Producto no encontrado' });
+
+  for (const [label, val] of [['precio de venta', sale_price], ['precio de compra', purchase_price], ['stock', stock], ['stock mínimo', min_stock]]) {
+    if (val !== undefined && val !== null && val !== '' && (!Number.isFinite(Number(val)) || Number(val) < 0)) {
+      return res.status(400).json({ error: `Valor inválido en ${label}` });
+    }
+  }
 
   if (barcode && barcode !== existing.barcode) {
     const dup = db.prepare('SELECT id FROM products WHERE barcode = ? AND id != ?').get(barcode, req.params.id);
@@ -773,6 +786,25 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
       return resolved;
     }
 
+    // Resuelve el texto de proveedor a un proveedor REAL (suppliers.id),
+    // creándolo si no existe. Sin esto, el import dejaba supplier_id en NULL
+    // y Compras (que busca productos por supplier_id) no encontraba nada:
+    // ni la búsqueda por proveedor ni "Sugerir productos a reponer".
+    const supplierCache = {};
+    function resolveSupplier(name) {
+      const trimmed = (name || '').toString().trim();
+      if (!trimmed) return null;
+      const key = trimmed.toLowerCase();
+      if (supplierCache[key] !== undefined) return supplierCache[key];
+      let sup = db.prepare('SELECT id FROM suppliers WHERE LOWER(name) = LOWER(?)').get(trimmed);
+      if (!sup) {
+        const result = db.prepare('INSERT INTO suppliers (name, notes) VALUES (?, ?)').run(trimmed, 'Importado de productos');
+        sup = { id: result.lastInsertRowid };
+      }
+      supplierCache[key] = sup.id;
+      return sup.id;
+    }
+
     function addExtraBarcode(productId, code) {
       if (!code) return;
       const ownPrimary = db.prepare('SELECT id FROM products WHERE barcode = ?').get(code);
@@ -808,6 +840,7 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
       const stock = row.stock;
       const minStock = row.minStock;
       const supplier = row.supplier || null;
+      const supplierId = resolveSupplier(supplier);
       const unitType = labelToUnitType(row.unitTypeRaw);
       const active = row.active;
       const needsReview = row.needsReview ? 1 : 0;
@@ -870,8 +903,8 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
       let productId;
       if (existing) {
         db.prepare(
-          `UPDATE products SET name=?, category_id=?, category_name=?, purchase_price=?, sale_price=?, stock=?, min_stock=?, supplier=?, unit_type=?, active=?, needs_review=?, updated_at=datetime('now') WHERE id=?`
-        ).run(name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active, needsReview, existing.id);
+          `UPDATE products SET name=?, category_id=?, category_name=?, purchase_price=?, sale_price=?, stock=?, min_stock=?, supplier=?, supplier_id=COALESCE(?, supplier_id), unit_type=?, active=?, needs_review=?, updated_at=datetime('now') WHERE id=?`
+        ).run(name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, supplierId, unitType, active, needsReview, existing.id);
         // Si se encontró por un código adicional, su código principal real no
         // viene en el archivo — sin esto la reconciliación lo desactivaría.
         seenBarcodes.add(existing.barcode);
@@ -879,8 +912,8 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
         updated++;
       } else {
         const result = db.prepare(
-          `INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, unit_type, active, needs_review) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
-        ).run(barcode, name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active, needsReview);
+          `INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, supplier_id, unit_type, active, needs_review) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).run(barcode, name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, supplierId, unitType, active, needsReview);
         productId = result.lastInsertRowid;
         inserted++;
       }

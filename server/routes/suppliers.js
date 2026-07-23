@@ -237,36 +237,53 @@ router.post('/purchases', (req, res) => {
 
     const purchaseStatus = status === 'pending' ? 'pending' : 'completed';
     let subtotal = 0;
-    items.forEach(item => {
-      const qty = parseFloat(item.quantity) || 0;
-      const price = parseFloat(item.unit_price) || 0;
+    for (const item of items) {
+      const qty = parseFloat(item.quantity);
+      const price = parseFloat(item.unit_price);
+      // Cantidades/precios negativos o no numéricos corrompían el stock y el
+      // gasto registrado en contabilidad.
+      if (!Number.isFinite(qty) || qty <= 0) {
+        return res.status(400).json({ error: `Cantidad inválida en "${item.product_name || 'producto'}"` });
+      }
+      if (!Number.isFinite(price) || price < 0) {
+        return res.status(400).json({ error: `Precio inválido en "${item.product_name || 'producto'}"` });
+      }
+      item.quantity = qty;
+      item.unit_price = price;
       item.subtotal = qty * price;
       subtotal += item.subtotal;
-    });
+    }
     const tax = subtotal * 0.16;
     const total = subtotal + tax;
 
-    // db.run() (a diferencia de db.prepare().run()) no devuelve lastInsertRowid
-    // — por eso crear un pedido/compra estaba roto antes de este fix.
-    const result = db.prepare('INSERT INTO purchases (supplier_id, invoice_number, subtotal, tax, total, status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(supplier_id, invoice_number || '', subtotal, tax, total, purchaseStatus, notes || '', req.user.id);
+    // Todo o nada: antes cada paso (compra, artículos, stock, gasto) se
+    // escribía suelto — un error a la mitad dejaba una compra fantasma sin
+    // artículos o con el inventario a medio actualizar.
+    let purchaseId;
+    const transact = db.transaction(() => {
+      // db.run() (a diferencia de db.prepare().run()) no devuelve lastInsertRowid
+      // — por eso crear un pedido/compra estaba roto antes de este fix.
+      const result = db.prepare('INSERT INTO purchases (supplier_id, invoice_number, subtotal, tax, total, status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(supplier_id, invoice_number || '', subtotal, tax, total, purchaseStatus, notes || '', req.user.id);
 
-    const purchaseId = result.lastInsertRowid;
+      purchaseId = result.lastInsertRowid;
 
-    const insertItem = db.prepare('INSERT INTO purchase_items (purchase_id, product_id, product_name, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?)');
-    items.forEach(item => {
-      insertItem.run(purchaseId, item.product_id || null, item.product_name || 'Producto', parseFloat(item.quantity) || 0, parseFloat(item.unit_price) || 0, item.subtotal);
-    });
-
-    if (purchaseStatus === 'completed') {
+      const insertItem = db.prepare('INSERT INTO purchase_items (purchase_id, product_id, product_name, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?)');
       items.forEach(item => {
-        if (item.product_id) {
-          updateProductStock(item.product_id, parseFloat(item.quantity) || 0, req.user.id, 'purchase', purchaseId, `Compra #${purchaseId}`);
-        }
+        insertItem.run(purchaseId, item.product_id || null, item.product_name || 'Producto', item.quantity, item.unit_price, item.subtotal);
       });
-      const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
-      recordPurchaseExpense(purchaseId, supplier?.name, total, invoice_number, req.user.id, req.user.name);
-    }
+
+      if (purchaseStatus === 'completed') {
+        items.forEach(item => {
+          if (item.product_id) {
+            updateProductStock(item.product_id, item.quantity, req.user.id, 'purchase', purchaseId, `Compra #${purchaseId}`);
+          }
+        });
+        const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
+        recordPurchaseExpense(purchaseId, supplier?.name, total, invoice_number, req.user.id, req.user.name);
+      }
+    });
+    transact();
 
     res.json({ id: purchaseId, message: purchaseStatus === 'pending' ? 'Pedido creado' : 'Compra registrada e inventariada' });
   } catch (e) {
@@ -289,7 +306,14 @@ router.put('/purchases/:id/receive', (req, res) => {
     const overrides = {};
     if (Array.isArray(req.body?.items)) {
       for (const o of req.body.items) {
-        if (o && o.id != null) overrides[o.id] = o;
+        if (o && o.id != null) {
+          const rq = o.received_quantity, rp = o.received_unit_price;
+          if ((rq !== undefined && rq !== null && (!Number.isFinite(parseFloat(rq)) || parseFloat(rq) < 0)) ||
+              (rp !== undefined && rp !== null && (!Number.isFinite(parseFloat(rp)) || parseFloat(rp) < 0))) {
+            return res.status(400).json({ error: 'Cantidad o precio recibido inválido' });
+          }
+          overrides[o.id] = o;
+        }
       }
     }
 
@@ -340,6 +364,9 @@ router.delete('/purchases/:id', (req, res) => {
   try {
     const db = getDB();
     const purchase = db.prepare('SELECT * FROM purchases WHERE id = ?').get(req.params.id);
+    // Antes esto tronaba con un error críptico al leer purchase.status de undefined
+    if (!purchase) return res.status(404).json({ error: 'Compra no encontrada' });
+    if (purchase.status === 'cancelled') return res.status(400).json({ error: 'Esta compra ya fue cancelada' });
 
     const transact = db.transaction(() => {
       if (purchase.status === 'completed') {

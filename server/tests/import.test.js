@@ -64,7 +64,9 @@ test('importación de Excel', async (t) => {
 
   const rows = [
     // Varios códigos en una celda + stock decimal en producto por pieza
-    { 'Código de Barras': '111111, 222222', 'Nombre': 'Cigarros Test', 'Categoría': 'Tabaco', 'Precio Compra': 55, 'Precio Venta': 65, 'Stock': 3.5, 'Stock Mínimo': 2, 'Proveedor': '', 'Tipo Unidad': 'Pieza', 'Activo': 'Sí' },
+    // + proveedor por texto (debe quedar ENLAZADO vía supplier_id, no solo
+    // como texto — Compras busca por supplier_id)
+    { 'Código de Barras': '111111, 222222', 'Nombre': 'Cigarros Test', 'Categoría': 'Tabaco', 'Precio Compra': 55, 'Precio Venta': 65, 'Stock': 3.5, 'Stock Mínimo': 2, 'Proveedor': 'Distribuidora Norte', 'Tipo Unidad': 'Pieza', 'Activo': 'Sí' },
     // Mismo nombre, mismo precio, código distinto → se funden en un producto
     { 'Código de Barras': '333333', 'Nombre': 'Refresco Dup', 'Categoría': 'Bebidas', 'Precio Compra': 12, 'Precio Venta': 20, 'Stock': 5, 'Stock Mínimo': 1, 'Proveedor': '', 'Tipo Unidad': 'Pieza', 'Activo': 'Sí' },
     { 'Código de Barras': '444444', 'Nombre': 'Refresco Dup', 'Categoría': 'Bebidas', 'Precio Compra': 12, 'Precio Venta': 20, 'Stock': 3, 'Stock Mínimo': 1, 'Proveedor': '', 'Tipo Unidad': 'Pieza', 'Activo': 'Sí' },
@@ -83,6 +85,23 @@ test('importación de Excel', async (t) => {
     assert.strictEqual(importRes.body.pending.length, 2);
     assert.ok(importRes.body.pending.some(p => p.type === 'individual' && p.name === 'Cigarros Test'));
     assert.ok(importRes.body.pending.some(p => p.type === 'name_conflict' && p.name === 'Galletas Dup'));
+  });
+
+  await t.test('el proveedor del archivo queda registrado y ENLAZADO (supplier_id)', async () => {
+    const sups = await api('/suppliers', { token: admin });
+    const dist = sups.body.find(s => s.name === 'Distribuidora Norte');
+    assert.ok(dist, 'el proveedor del Excel debe crearse en la tabla suppliers');
+
+    const prod = await api('/products/barcode/111111', { token: admin });
+    assert.strictEqual(prod.body.supplier_id, dist.id, 'el producto debe apuntar al proveedor real, no solo el texto');
+
+    // Con el vínculo real, "Sugerir productos a reponer" del proveedor
+    // encuentra sus productos (Cigarros: stock 3.5 <= min 2? no — está sobre
+    // el mínimo, así que el pedido sugerido puede venir vacío; lo que se
+    // valida aquí es que la consulta por proveedor SÍ ve el producto).
+    const order = await api(`/suppliers/${dist.id}/suggested-order`, { token: admin });
+    assert.strictEqual(order.status, 200);
+    assert.strictEqual(order.body.supplier.id, dist.id);
   });
 
   await t.test('las categorías del archivo quedan registradas', async () => {
