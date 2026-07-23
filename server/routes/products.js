@@ -564,6 +564,29 @@ function stripAccents(s) {
   return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
+// Una celda de código de barras puede traer VARIOS códigos del mismo producto
+// (presentaciones distintas, códigos de báscula) separados por coma, punto y
+// coma, barra, salto de línea o espacios. El primero queda como código
+// principal y el resto como códigos adicionales (product_barcodes). El split
+// por espacios solo aplica si TODOS los fragmentos parecen códigos reales
+// (4+ caracteres) — así "ABC 12" no se parte por accidente.
+function splitBarcodes(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return [];
+  let parts = s.split(/[,;|\n/]+/).map(p => p.trim()).filter(Boolean);
+  if (parts.length === 1) {
+    const spaceParts = parts[0].split(/\s+/).filter(Boolean);
+    if (spaceParts.length > 1 && spaceParts.every(p => p.length >= 4)) parts = spaceParts;
+  }
+  return [...new Set(parts)];
+}
+
+// Clave para detectar el mismo producto repetido en varias filas del archivo:
+// nombre sin acentos, mayúsculas y espacios normalizados.
+function nameKeyOf(name) {
+  return stripAccents(name).toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
 function normalizeHeader(h) {
   // Quita puntuación ("Cod. Barras" -> "COD BARRAS") para que las coincidencias
   // por "contiene" no fallen solo por un punto o un espacio doble de más.
@@ -717,10 +740,24 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
 
   const db = getDB();
   let inserted = 0, updated = 0, deactivated = 0, skipped = 0, needsReviewCount = 0;
+  let merged = 0, extraBarcodesAdded = 0;
+  // "Dudas" del import: cosas que el sistema no puede decidir solo y que el
+  // frontend muestra en una ventana al terminar, para resolverlas en lote:
+  //  - 'individual': stock con decimales en producto por pieza → candidato a
+  //    venta individual (como los cigarros), pero faltan unidades por paquete
+  //    y precio por pieza.
+  //  - 'name_conflict': dos filas con el mismo nombre pero distinto código Y
+  //    distinto precio — puede ser otro código del mismo producto o un
+  //    producto realmente distinto; lo decide el usuario.
+  const pending = [];
+  const warnings = [];
 
   const transaction = db.transaction(() => {
     const seenBarcodes = new Set();
     const categoryCache = {};
+    // nombre normalizado -> producto ya procesado en ESTE archivo (para
+    // detectar el mismo producto repetido en varias filas con otro código)
+    const nameIndex = new Map();
 
     function resolveCategory(name) {
       const trimmed = (name || '').toString().trim();
@@ -736,11 +773,31 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
       return resolved;
     }
 
+    function addExtraBarcode(productId, code) {
+      if (!code) return;
+      const ownPrimary = db.prepare('SELECT id FROM products WHERE barcode = ?').get(code);
+      if (ownPrimary) {
+        if (ownPrimary.id !== productId) warnings.push(`Código ${code}: ya es código principal de otro producto — no se agregó como adicional`);
+        return;
+      }
+      const existingExtra = db.prepare('SELECT product_id FROM product_barcodes WHERE barcode = ?').get(code);
+      if (existingExtra) {
+        if (existingExtra.product_id !== productId) warnings.push(`Código ${code}: ya está asignado a otro producto — no se agregó como adicional`);
+        return;
+      }
+      db.prepare('INSERT INTO product_barcodes (product_id, barcode) VALUES (?, ?)').run(productId, code);
+      extraBarcodesAdded++;
+    }
+
     for (const row of normalizedRows) {
       const name = row.name;
       if (!name) { skipped++; continue; }
 
-      let barcode = row.barcode;
+      // Una celda puede traer varios códigos del mismo producto: el primero
+      // es el principal, el resto se registran como códigos adicionales.
+      const codes = splitBarcodes(row.barcode);
+      let barcode = codes[0];
+      const extraCodes = codes.slice(1);
       if (!barcode) {
         barcode = 'BAR-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase();
       }
@@ -754,21 +811,91 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
       const unitType = labelToUnitType(row.unitTypeRaw);
       const active = row.active;
       const needsReview = row.needsReview ? 1 : 0;
-      if (needsReview) needsReviewCount++;
 
       seenBarcodes.add(barcode);
+      for (const c of extraCodes) seenBarcodes.add(c);
 
-      const existing = db.prepare('SELECT id FROM products WHERE barcode = ?').get(barcode);
+      // Buscar el producto por código principal Y por códigos adicionales ya
+      // registrados — así una reimportación reconoce el producto aunque el
+      // archivo traiga uno de sus códigos secundarios.
+      let existing = db.prepare('SELECT id, barcode, stock, sellable_individually FROM products WHERE barcode = ?').get(barcode);
+      if (!existing) {
+        existing = db.prepare(
+          `SELECT p.id, p.barcode, p.stock, p.sellable_individually FROM products p
+           JOIN product_barcodes pb ON pb.product_id = p.id WHERE pb.barcode = ?`
+        ).get(barcode);
+      }
+
+      // Mismo nombre repetido dentro del archivo con otro código:
+      //  - mismo precio → es otro código/presentación del mismo producto: se
+      //    agrega como código adicional y se suma el stock, sin duplicar.
+      //    (aplica también si el producto ya existía de un import anterior —
+      //    de lo contrario, al reimportar, la última fila pisaría el stock
+      //    sumado en vez de acumularlo)
+      //  - precio distinto → duda para el usuario (ventana de pendientes).
+      const nameKey = nameKeyOf(name);
+      const prior = nameIndex.get(nameKey);
+      if (prior && (!existing || existing.id === prior.productId)) {
+        const samePrice = Math.abs((prior.salePrice || 0) - (salePrice || 0)) < 0.005;
+        if (samePrice) {
+          addExtraBarcode(prior.productId, barcode);
+          for (const c of extraCodes) addExtraBarcode(prior.productId, c);
+          if (stock) db.prepare("UPDATE products SET stock = stock + ?, updated_at = datetime('now') WHERE id = ?").run(stock, prior.productId);
+          if (existing) seenBarcodes.add(existing.barcode);
+          merged++;
+          continue;
+        }
+        if (!existing) {
+          const priorStock = db.prepare('SELECT stock FROM products WHERE id = ?').get(prior.productId);
+          pending.push({
+            type: 'name_conflict',
+            name, barcode,
+            sale_price: salePrice, purchase_price: purchasePrice,
+            stock, min_stock: minStock,
+            category_id: category.id, category_name: category.name,
+            existing_product_id: prior.productId,
+            existing_name: prior.name,
+            existing_price: prior.salePrice,
+            existing_stock: priorStock ? priorStock.stock : 0,
+          });
+          continue;
+        }
+        // El producto ya existe con ese código pero el archivo trae precios
+        // contradictorios para el mismo nombre: sigue el flujo normal de
+        // actualización (la última fila gana).
+      }
+
+      if (needsReview) needsReviewCount++;
+
+      let productId;
       if (existing) {
         db.prepare(
           `UPDATE products SET name=?, category_id=?, category_name=?, purchase_price=?, sale_price=?, stock=?, min_stock=?, supplier=?, unit_type=?, active=?, needs_review=?, updated_at=datetime('now') WHERE id=?`
         ).run(name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active, needsReview, existing.id);
+        // Si se encontró por un código adicional, su código principal real no
+        // viene en el archivo — sin esto la reconciliación lo desactivaría.
+        seenBarcodes.add(existing.barcode);
+        productId = existing.id;
         updated++;
       } else {
-        db.prepare(
+        const result = db.prepare(
           `INSERT INTO products (barcode, name, category_id, category_name, purchase_price, sale_price, stock, min_stock, supplier, unit_type, active, needs_review) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(barcode, name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, unitType, active, needsReview);
+        productId = result.lastInsertRowid;
         inserted++;
+      }
+
+      nameIndex.set(nameKey, { productId, salePrice, name });
+
+      for (const c of extraCodes) addExtraBarcode(productId, c);
+
+      // Stock con decimales en un producto por pieza (no kg/litro): señal de
+      // que se vende suelto por unidad (ej. 3.5 cajetillas = 3 enteras y
+      // media abierta). Faltan datos que solo el usuario conoce (unidades por
+      // paquete y precio por pieza) → va a la ventana de pendientes.
+      const alreadyIndividual = existing ? !!existing.sellable_individually : false;
+      if (unitType === 'unit' && Number.isFinite(stock) && Math.abs(stock % 1) > 1e-9 && !alreadyIndividual) {
+        pending.push({ type: 'individual', product_id: productId, name, stock });
       }
     }
 
@@ -778,7 +905,7 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
     // vacío" y borra de un plumazo el catálogo activo completo. Esto pasó de
     // verdad: un archivo con encabezados no reconocidos desactivó los 222
     // productos de la tienda porque ninguna fila "apareció" en el archivo.
-    if (inserted === 0 && updated === 0) {
+    if (inserted === 0 && updated === 0 && merged === 0) {
       throw new Error('No se reconoció ninguna fila del archivo. Revisa que sea un Excel de inventario válido (o que la hoja no esté vacía) — no se modificó nada.');
     }
 
@@ -804,7 +931,7 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
     return res.status(500).json({ error: 'Error al importar: ' + e.message });
   }
 
-  res.json({ inserted, updated, deactivated, skipped, needsReview: needsReviewCount });
+  res.json({ inserted, updated, deactivated, skipped, merged, extraBarcodes: extraBarcodesAdded, needsReview: needsReviewCount, pending, warnings });
 });
 
 module.exports = router;

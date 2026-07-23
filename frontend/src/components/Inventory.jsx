@@ -51,6 +51,11 @@ export default function Inventory({ user, onLogout }) {
   const [obsoleteLoading, setObsoleteLoading] = useState(false)
   const [selectedObsolete, setSelectedObsolete] = useState(new Set())
   const importExcelRef = useRef(null)
+  // Dudas del import de Excel (venta individual por stock decimal, nombres
+  // repetidos con precio distinto): se resuelven todas en una sola ventana
+  // al terminar la importación. null = sin pendientes.
+  const [importPending, setImportPending] = useState(null)
+  const [importSaving, setImportSaving] = useState(false)
 
   const loadProducts = useCallback(async () => {
     try {
@@ -85,10 +90,71 @@ export default function Inventory({ user, onLogout }) {
     }
     try {
       const res = await products.importExcel(file)
-      setSuccess(`Importación completa: ${res.inserted} nuevos, ${res.updated} actualizados, ${res.deactivated} desactivados${res.skipped ? `, ${res.skipped} filas sin nombre omitidas` : ''}${res.needsReview ? `. ${res.needsReview} producto(s) quedaron con datos incompletos — aparecen hasta arriba de la lista para completarlos.` : ''}`)
+      const extras = []
+      if (res.merged) extras.push(`${res.merged} fila(s) repetidas fundidas en su producto`)
+      if (res.extraBarcodes) extras.push(`${res.extraBarcodes} código(s) adicionales registrados`)
+      if (res.skipped) extras.push(`${res.skipped} filas sin nombre omitidas`)
+      setSuccess(`Importación completa: ${res.inserted} nuevos, ${res.updated} actualizados, ${res.deactivated} desactivados${extras.length ? ', ' + extras.join(', ') : ''}${res.needsReview ? `. ${res.needsReview} producto(s) quedaron con datos incompletos — aparecen hasta arriba de la lista.` : ''}`)
+      if (res.warnings?.length) setError(res.warnings.join(' · '))
       loadProducts()
+      loadCategories()
+      // Abrir la ventana de dudas con valores de resolución por defecto
+      if (res.pending?.length) {
+        setImportPending(res.pending.map(p => p.type === 'individual'
+          ? { ...p, resolution: 'apply', units_per_package: '', individual_price: '' }
+          : { ...p, resolution: 'add_code' }
+        ))
+      }
     } catch (e) { setError(e.message) }
     e.target.value = ''
+  }
+
+  const updatePendingItem = (index, patch) => {
+    setImportPending(prev => prev.map((it, i) => i === index ? { ...it, ...patch } : it))
+  }
+
+  const handleResolvePending = async () => {
+    for (const it of importPending) {
+      if (it.type === 'individual' && it.resolution === 'apply' && (!it.units_per_package || !it.individual_price)) {
+        setError(`Completa unidades por paquete y precio por pieza de "${it.name}", o márcalo como "No aplica"`)
+        return
+      }
+    }
+    setImportSaving(true)
+    setError('')
+    let done = 0
+    try {
+      for (const it of importPending) {
+        if (it.type === 'individual' && it.resolution === 'apply') {
+          await products.update(it.product_id, {
+            sellable_individually: true,
+            units_per_package: parseInt(it.units_per_package),
+            individual_price: parseFloat(it.individual_price)
+          })
+          done++
+        } else if (it.type === 'name_conflict') {
+          if (it.resolution === 'add_code') {
+            await products.addBarcode(it.existing_product_id, it.barcode)
+            const newStock = (parseFloat(it.existing_stock) || 0) + (parseFloat(it.stock) || 0)
+            await products.update(it.existing_product_id, { stock: newStock })
+            done++
+          } else if (it.resolution === 'create') {
+            await products.create({
+              name: it.name, barcode: it.barcode,
+              sale_price: it.sale_price, purchase_price: it.purchase_price,
+              stock: it.stock, min_stock: it.min_stock,
+              category_id: it.category_id
+            })
+            done++
+          }
+        }
+      }
+      setImportPending(null)
+      setSuccess(`${done} pendiente(s) de importación resueltos`)
+      setTimeout(() => setSuccess(''), 4000)
+      loadProducts()
+    } catch (e) { setError(e.message) }
+    setImportSaving(false)
   }
 
   const openCategoriesModal = () => {
@@ -573,6 +639,74 @@ export default function Inventory({ user, onLogout }) {
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setKardexProduct(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importPending && (
+        <div className="modal-overlay" onKeyDown={modalKeys(null, null)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <h3>Dudas de la importación ({importPending.length})</h3>
+            <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'0.75rem'}}>
+              El resto del inventario ya se importó. Solo falta decidir estos casos — revisa cada uno y presiona "Guardar todo".
+            </p>
+            <div style={{maxHeight:'55vh', overflowY:'auto', display:'flex', flexDirection:'column', gap:'0.75rem'}}>
+              {importPending.map((it, i) => it.type === 'individual' ? (
+                <div key={i} style={{border:'1px solid var(--border)', borderRadius:'8px', padding:'0.75rem'}}>
+                  <strong>{it.name}</strong>
+                  <p style={{fontSize:'0.85rem', color:'var(--text-muted)', margin:'0.25rem 0 0.5rem'}}>
+                    Su stock tiene decimales ({it.stock}) — parece que se vende por pieza suelta (como los cigarros: 3.5 = 3 paquetes y medio). Indica cómo se vende:
+                  </p>
+                  <div style={{display:'flex', gap:'0.75rem', alignItems:'center', flexWrap:'wrap'}}>
+                    <label style={{display:'flex', alignItems:'center', gap:'0.35rem', fontWeight:'normal'}}>
+                      <input type="radio" checked={it.resolution === 'apply'} onChange={() => updatePendingItem(i, { resolution: 'apply' })} />
+                      Sí, se vende por pieza:
+                    </label>
+                    <input type="number" min="1" step="1" placeholder="Piezas por paquete" style={{width:'140px'}} disabled={it.resolution !== 'apply'}
+                      value={it.units_per_package} onChange={e => updatePendingItem(i, { units_per_package: e.target.value })} />
+                    <input type="number" min="0" step="0.01" placeholder="Precio por pieza" style={{width:'130px'}} disabled={it.resolution !== 'apply'}
+                      value={it.individual_price} onChange={e => updatePendingItem(i, { individual_price: e.target.value })} />
+                    <label style={{display:'flex', alignItems:'center', gap:'0.35rem', fontWeight:'normal'}}>
+                      <input type="radio" checked={it.resolution === 'skip'} onChange={() => updatePendingItem(i, { resolution: 'skip' })} />
+                      No aplica (dejar como está)
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                <div key={i} style={{border:'1px solid var(--border)', borderRadius:'8px', padding:'0.75rem'}}>
+                  <strong>{it.name}</strong>
+                  <p style={{fontSize:'0.85rem', color:'var(--text-muted)', margin:'0.25rem 0 0.5rem'}}>
+                    El archivo trae este nombre dos veces con código y precio distintos: ya existe con precio ${(it.existing_price || 0).toFixed(2)} y esta fila trae el código {it.barcode} a ${(it.sale_price || 0).toFixed(2)}. ¿Qué es?
+                  </p>
+                  <div style={{display:'flex', flexDirection:'column', gap:'0.35rem'}}>
+                    <label style={{display:'flex', alignItems:'center', gap:'0.35rem', fontWeight:'normal'}}>
+                      <input type="radio" checked={it.resolution === 'add_code'} onChange={() => updatePendingItem(i, { resolution: 'add_code' })} />
+                      Es el mismo producto — agregar {it.barcode} como código adicional y sumar su stock (+{it.stock || 0})
+                    </label>
+                    <label style={{display:'flex', alignItems:'center', gap:'0.35rem', fontWeight:'normal'}}>
+                      <input type="radio" checked={it.resolution === 'create'} onChange={() => updatePendingItem(i, { resolution: 'create' })} />
+                      Es un producto distinto — crearlo aparte con su precio de ${(it.sale_price || 0).toFixed(2)}
+                    </label>
+                    <label style={{display:'flex', alignItems:'center', gap:'0.35rem', fontWeight:'normal'}}>
+                      <input type="radio" checked={it.resolution === 'skip'} onChange={() => updatePendingItem(i, { resolution: 'skip' })} />
+                      Omitir esta fila
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {error && <div className="alert alert-error" style={{marginTop:'0.5rem'}}>{error}</div>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" disabled={importSaving} onClick={async () => {
+                if (await confirmDialog('¿Cerrar sin resolver? Los productos con dudas quedaron importados tal cual (sin venta individual ni códigos extra); puedes editarlos a mano después.')) {
+                  setImportPending(null)
+                  setError('')
+                }
+              }}>Después</button>
+              <button className="btn btn-primary" disabled={importSaving} onClick={handleResolvePending}>
+                {importSaving ? 'Guardando...' : 'Guardar todo'}
+              </button>
             </div>
           </div>
         </div>
