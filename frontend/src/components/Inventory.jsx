@@ -4,6 +4,7 @@ import { formatDateTime, formatDate, formatCalendarDate } from '../dateUtils'
 import { getTheme, toggleTheme } from '../theme'
 import { modalKeys } from '../modalKeys'
 import { confirmDialog } from '../confirmDialog'
+import { barcodeSVG } from '../barcode'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -31,6 +32,10 @@ export default function Inventory({ user, onLogout }) {
   const [success, setSuccess] = useState('')
   const [kardexProduct, setKardexProduct] = useState(null)
   const [kardexData, setKardexData] = useState([])
+  const [priceHistory, setPriceHistory] = useState([])
+  // Impresión de etiquetas de código de barras (B3)
+  const [showLabelsModal, setShowLabelsModal] = useState(false)
+  const [labelItems, setLabelItems] = useState([])
   const [batchProduct, setBatchProduct] = useState(null)
   const [batches, setBatches] = useState([])
   const [batchForm, setBatchForm] = useState({ batch_code: '', quantity: '', expiry_date: '' })
@@ -260,8 +265,55 @@ export default function Inventory({ user, onLogout }) {
     catch (e) { setError(e.message) }
   }
 
+  // Etiquetas: parte de los productos visibles en la lista actual (misma
+  // búsqueda/filtros); cada uno con cuántas copias imprimir.
+  const openLabelsModal = () => {
+    setLabelItems(productList.map(p => ({ id: p.id, name: p.name, barcode: p.barcode, sale_price: p.sale_price, copies: 0 })))
+    setShowLabelsModal(true)
+  }
+
+  const printLabels = () => {
+    const toPrint = labelItems.filter(i => i.copies > 0)
+    if (toPrint.length === 0) { setError('Indica cuántas etiquetas quieres de al menos un producto'); return }
+    const labels = []
+    for (const item of toPrint) {
+      const svg = barcodeSVG(item.barcode || '', { height: 40, moduleWidth: 2 })
+      for (let c = 0; c < item.copies; c++) {
+        labels.push(`
+          <div class="label">
+            <div class="label-name">${(item.name || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').substring(0, 40)}</div>
+            <div class="label-price">$${parseFloat(item.sale_price || 0).toFixed(2)}</div>
+            <div class="label-barcode">${svg || `<span class="no-code">${item.barcode || 'sin código'}</span>`}</div>
+          </div>`)
+      }
+    }
+    const win = window.open('', '_blank', 'width=900,height=700')
+    if (!win) { setError('El navegador bloqueó la ventana de impresión'); return }
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Etiquetas</title><style>
+      @page { size: letter; margin: 1cm; }
+      body { font-family: Arial, sans-serif; margin: 0; }
+      .sheet { display: flex; flex-wrap: wrap; gap: 4mm; }
+      .label { width: 60mm; height: 30mm; border: 1px dashed #bbb; box-sizing: border-box;
+               padding: 2mm; display: flex; flex-direction: column; align-items: center;
+               justify-content: space-between; overflow: hidden; page-break-inside: avoid; }
+      .label-name { font-size: 9pt; font-weight: bold; text-align: center; line-height: 1.1; }
+      .label-price { font-size: 12pt; font-weight: bold; }
+      .label-barcode svg { max-width: 54mm; height: auto; }
+      .no-code { font-size: 8pt; color: #666; }
+      @media print { .label { border: none; } }
+    </style></head><body><div class="sheet">${labels.join('')}</div>
+    <script>window.onload = () => { window.print(); }<\/script></body></html>`)
+    win.document.close()
+    setShowLabelsModal(false)
+  }
+
   const openKardex = async (p) => {
     setKardexProduct(p)
+    setPriceHistory([])
+    try {
+      const ph = await products.priceHistory(p.id)
+      setPriceHistory(ph.history || [])
+    } catch (e) {}
     try {
       const res = await products.kardex(p.id, { page: 1, limit: 50 })
       setKardexData(res.movements)
@@ -443,6 +495,7 @@ export default function Inventory({ user, onLogout }) {
           <button className="btn btn-sm btn-outline" onClick={openCategoriesModal}>Categorías</button>
           <button className="btn btn-sm btn-outline" onClick={handleExportExcel}>Exportar Excel</button>
           <button className="btn btn-sm btn-outline" onClick={() => importExcelRef.current?.click()}>Importar Excel</button>
+          <button className="btn btn-sm btn-outline" onClick={openLabelsModal}>Etiquetas</button>
           <input ref={importExcelRef} type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleImportExcel} />
           {isStandalone && (
             <>
@@ -637,8 +690,69 @@ export default function Inventory({ user, onLogout }) {
                 </tbody>
               </table>
             </div>
+            {priceHistory.length > 0 && (
+              <>
+                <h4 style={{marginTop:'1rem'}}>Cambios de precio</h4>
+                <div className="table-responsive">
+                  <table className="table">
+                    <thead>
+                      <tr><th>Fecha</th><th>Precio</th><th>Antes</th><th>Después</th><th>Origen</th><th>Usuario</th></tr>
+                    </thead>
+                    <tbody>
+                      {priceHistory.map(h => (
+                        <tr key={h.id}>
+                          <td>{formatDateTime(h.created_at)}</td>
+                          <td>{h.field === 'sale_price' ? 'Venta' : h.field === 'purchase_price' ? 'Compra' : 'Pieza'}</td>
+                          <td>${(h.old_value ?? 0).toFixed(2)}</td>
+                          <td><strong>${(h.new_value ?? 0).toFixed(2)}</strong></td>
+                          <td style={{fontSize:'0.8rem'}}>{h.source || '-'}</td>
+                          <td style={{fontSize:'0.8rem'}}>{h.changed_by_name || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setKardexProduct(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLabelsModal && (
+        <div className="modal-overlay" onClick={() => setShowLabelsModal(false)} onKeyDown={modalKeys(() => setShowLabelsModal(false), printLabels)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <h3>Imprimir etiquetas de precio</h3>
+            <p style={{fontSize:'0.85rem', color:'var(--text-muted)'}}>
+              Escribe cuántas etiquetas quieres de cada producto (los de la lista actual). Se imprimen en hoja tamaño carta.
+            </p>
+            <div style={{maxHeight:'50vh', overflowY:'auto'}}>
+              <table className="table">
+                <thead>
+                  <tr><th>Producto</th><th>Código</th><th>Precio</th><th style={{width:'110px'}}>Etiquetas</th></tr>
+                </thead>
+                <tbody>
+                  {labelItems.map((item, i) => (
+                    <tr key={item.id}>
+                      <td>{item.name}</td>
+                      <td style={{fontSize:'0.8rem'}}>{item.barcode || '-'}</td>
+                      <td>${parseFloat(item.sale_price || 0).toFixed(2)}</td>
+                      <td>
+                        <input type="number" min="0" step="1" className="input" style={{width:'80px'}}
+                          value={item.copies}
+                          onChange={e => setLabelItems(prev => prev.map((it, j) => j === i ? { ...it, copies: Math.max(0, parseInt(e.target.value) || 0) } : it))} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {error && <div className="alert alert-error" style={{marginTop:'0.5rem'}}>{error}</div>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowLabelsModal(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={printLabels}>Imprimir</button>
             </div>
           </div>
         </div>

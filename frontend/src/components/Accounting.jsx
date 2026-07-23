@@ -44,6 +44,9 @@ export default function Accounting({ user, onLogout }) {
   const [movements, setMovements] = useState([])
   const [movementsType, setMovementsType] = useState('')
   const [wasteData, setWasteData] = useState(null)
+  // Utilidad por producto/categoría (B2)
+  const [profitRows, setProfitRows] = useState([])
+  const [profitGroupBy, setProfitGroupBy] = useState('product')
 
   const loadDashboard = useCallback(async () => {
     try { setDashData(await accounting.dashboard()) } catch (e) { setError(e.message) }
@@ -139,6 +142,18 @@ export default function Accounting({ user, onLogout }) {
     }
   }, [tab, dateFrom, dateTo])
   useEffect(() => { if (tab === 'movements') { loadMovements(); const interval = setInterval(loadMovements, 30000); return () => clearInterval(interval) } }, [tab, dateFrom, dateTo, movementsType])
+
+  const loadProfitByProduct = useCallback(async () => {
+    try {
+      const params = { groupBy: profitGroupBy }
+      if (dateFrom) params.dateFrom = dateFrom
+      if (dateTo) params.dateTo = dateTo
+      const res = await accounting.profitByProduct(params)
+      setProfitRows(res.rows || [])
+    } catch (e) { setError(e.message) }
+  }, [profitGroupBy, dateFrom, dateTo])
+
+  useEffect(() => { if (tab === 'profitProducts') loadProfitByProduct() }, [tab, loadProfitByProduct])
   useEffect(() => { if (tab === 'cashier') { loadCashRegister(); loadHistory(); const interval = setInterval(() => { loadCashRegister(); loadHistory() }, 30000); return () => clearInterval(interval) } }, [tab])
 
   const exportCSV = (data, filename) => {
@@ -169,6 +184,7 @@ export default function Accounting({ user, onLogout }) {
     { id: 'movements', label: 'Movimientos' },
     { id: 'expenses', label: 'Gastos' },
     { id: 'reports', label: 'Reportes' },
+    { id: 'profitProducts', label: 'Utilidad' },
     { id: 'predictions', label: 'Predicciones' },
     { id: 'events', label: 'Eventos' },
   ]
@@ -458,6 +474,55 @@ export default function Accounting({ user, onLogout }) {
               </table>
             </div>
           </div>
+        </div>
+      )}
+
+      {tab === 'profitProducts' && (
+        <div className="card">
+          <h3>Utilidad por {profitGroupBy === 'product' ? 'producto' : 'categoría'}</h3>
+          <p className="text-muted" style={{fontSize:'0.85rem'}}>
+            Qué te deja dinero y qué no: ingreso menos costo de la mercancía vendida en el periodo.
+          </p>
+          <div style={{display:'flex', gap:'0.5rem', alignItems:'center', flexWrap:'wrap', marginBottom:'0.75rem'}}>
+            <select className="input" value={profitGroupBy} onChange={e => setProfitGroupBy(e.target.value)}>
+              <option value="product">Por producto</option>
+              <option value="category">Por categoría</option>
+            </select>
+            <input type="date" className="input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            <span>a</span>
+            <input type="date" className="input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            <button className="btn btn-sm btn-outline" onClick={loadProfitByProduct}>Actualizar</button>
+          </div>
+          {profitRows.length === 0 ? <p className="text-muted">Sin ventas en el periodo</p> : (
+            <div className="table-responsive">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{profitGroupBy === 'product' ? 'Producto' : 'Categoría'}</th>
+                    {profitGroupBy === 'product' && <th>Categoría</th>}
+                    <th>Vendidos</th>
+                    <th>Ingreso</th>
+                    <th>Costo</th>
+                    <th>Utilidad</th>
+                    <th>Margen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profitRows.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.name}</td>
+                      {profitGroupBy === 'product' && <td style={{fontSize:'0.85rem'}}>{r.category_name}</td>}
+                      <td>{r.qty_sold}</td>
+                      <td>{formatMoney(r.revenue)}</td>
+                      <td>{formatMoney(r.cost)}</td>
+                      <td className={r.profit >= 0 ? 'text-success' : 'text-danger'}><strong>{formatMoney(r.profit)}</strong></td>
+                      <td className={r.profit >= 0 ? 'text-success' : 'text-danger'}>{r.margin_pct != null ? `${r.margin_pct}%` : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

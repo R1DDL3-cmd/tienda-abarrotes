@@ -117,11 +117,17 @@ router.get('/cash-register', authMiddleware, (req, res) => {
     ).run(today, 'open', admin ? admin.id : 1);
     register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(today);
   }
-  // expectedCash: el efectivo que debería haber en el cajón AHORA — es lo que
-  // el POS usa para avisar si el conteo al cerrar no cuadra. totalSales sigue
-  // siendo el total del día con todos los métodos de pago (informativo).
-  const { expected } = computeExpectedCash(db, register);
-  res.json({ ...register, totalSales: todaySales.total, salesByUser, totalExpenses: todayExpenses.total, expectedCash: expected });
+  // expectedCash: el efectivo que debería haber en el cajón AHORA. Solo lo ve
+  // el ADMIN — corte ciego: el cajero cuenta el dinero sin conocer el
+  // esperado (estándar antifraude: si sabe cuánto "debe" haber, puede
+  // cuadrar el faltante antes de reportarlo). El sistema guarda la
+  // diferencia de todos modos y el dueño la revisa en Contabilidad.
+  const payload = { ...register, totalSales: todaySales.total, salesByUser, totalExpenses: todayExpenses.total };
+  if (req.user.role === 'admin') {
+    const { expected } = computeExpectedCash(db, register);
+    payload.expectedCash = expected;
+  }
+  res.json(payload);
 });
 
 router.put('/cash-register', authMiddleware, (req, res) => {
@@ -359,6 +365,67 @@ router.get('/profit', authMiddleware, (req, res) => {
   } catch (e) {
     console.error('Error getting profit:', e);
     res.status(500).json({ error: 'Error al calcular ganancias: ' + e.message });
+  }
+});
+
+// Utilidad por producto o por categoría: qué deja dinero y qué no. Usa el
+// mismo prorrateo de venta individual que /profit (una pieza suelta cuesta
+// una fracción del paquete, no el paquete entero). Solo admin: expone
+// márgenes y costos del negocio.
+router.get('/profit-by-product', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    const db = getDB();
+    const { dateFrom, dateTo, groupBy } = req.query;
+    const params = [];
+    let where = "s.status = 'completed'";
+    if (dateFrom) { where += ` AND ${bizDate('s.created_at')} >= ?`; params.push(dateFrom); }
+    if (dateTo) { where += ` AND ${bizDate('s.created_at')} <= ?`; params.push(dateTo); }
+
+    const costExpr = `si.quantity * CASE
+      WHEN si.is_individual = 1 AND p.units_per_package > 0 THEN COALESCE(p.purchase_price, 0) * 1.0 / p.units_per_package
+      ELSE COALESCE(p.purchase_price, 0)
+    END`;
+
+    let rows;
+    if (groupBy === 'category') {
+      rows = db.prepare(
+        `SELECT COALESCE(p.category_name, 'Sin categoría') AS name,
+                SUM(si.quantity) AS qty_sold,
+                SUM(si.subtotal) AS revenue,
+                SUM(${costExpr}) AS cost
+         FROM sale_items si
+         JOIN sales s ON si.sale_id = s.id
+         LEFT JOIN products p ON si.product_id = p.id
+         WHERE ${where}
+         GROUP BY COALESCE(p.category_name, 'Sin categoría')`
+      ).all(...params);
+    } else {
+      rows = db.prepare(
+        `SELECT si.product_id, si.product_name AS name,
+                COALESCE(p.category_name, 'Sin categoría') AS category_name,
+                SUM(si.quantity) AS qty_sold,
+                SUM(si.subtotal) AS revenue,
+                SUM(${costExpr}) AS cost
+         FROM sale_items si
+         JOIN sales s ON si.sale_id = s.id
+         LEFT JOIN products p ON si.product_id = p.id
+         WHERE ${where}
+         GROUP BY si.product_id`
+      ).all(...params);
+    }
+
+    const result = rows.map(r => {
+      const profit = (r.revenue || 0) - (r.cost || 0);
+      return {
+        ...r,
+        profit: Math.round(profit * 100) / 100,
+        margin_pct: r.revenue > 0 ? Math.round((profit / r.revenue) * 10000) / 100 : null,
+      };
+    }).sort((a, b) => b.profit - a.profit);
+
+    res.json({ rows: result });
+  } catch (e) {
+    res.status(500).json({ error: 'Error calculando utilidad: ' + e.message });
   }
 });
 

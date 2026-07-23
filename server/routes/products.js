@@ -2,6 +2,7 @@ const express = require('express');
 const XLSX = require('xlsx');
 const { getDB } = require('../db');
 const { authMiddleware, inventoryAdminMiddleware } = require('../middleware/auth');
+const { recordPriceChange } = require('../services/priceHistory');
 
 const router = express.Router();
 
@@ -92,6 +93,16 @@ router.get('/barcode/:barcode', authMiddleware, (req, res) => {
   }
   if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
   res.json(product);
+});
+
+// Historial de cambios de precio del producto (quién, cuándo, de cuánto a
+// cuánto y desde dónde: edición, import o recepción de compra).
+router.get('/:id/price-history', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  const history = db.prepare(
+    'SELECT * FROM price_history WHERE product_id = ? ORDER BY created_at DESC LIMIT 100'
+  ).all(req.params.id);
+  res.json({ history });
 });
 
 router.get('/:id/barcodes', authMiddleware, (req, res) => {
@@ -292,6 +303,17 @@ router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
   if (category_id) {
     const cat = db.prepare('SELECT name FROM categories WHERE id = ?').get(category_id);
     if (cat) categoryName = cat.name;
+  }
+
+  // Historial de precios: registrar qué cambió antes de pisar los valores.
+  if (sale_price !== undefined) {
+    recordPriceChange(db, { productId: existing.id, field: 'sale_price', oldValue: existing.sale_price, newValue: sale_price, source: 'edición manual', user: req.user });
+  }
+  if (purchase_price !== undefined) {
+    recordPriceChange(db, { productId: existing.id, field: 'purchase_price', oldValue: existing.purchase_price, newValue: purchase_price, source: 'edición manual', user: req.user });
+  }
+  if (finalSellableIndividually && individual_price !== undefined) {
+    recordPriceChange(db, { productId: existing.id, field: 'individual_price', oldValue: existing.individual_price, newValue: individual_price, source: 'edición manual', user: req.user });
   }
 
   // Editar y guardar el producto es justo la señal de que alguien ya revisó
@@ -851,10 +873,10 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
       // Buscar el producto por código principal Y por códigos adicionales ya
       // registrados — así una reimportación reconoce el producto aunque el
       // archivo traiga uno de sus códigos secundarios.
-      let existing = db.prepare('SELECT id, barcode, stock, sellable_individually FROM products WHERE barcode = ?').get(barcode);
+      let existing = db.prepare('SELECT id, barcode, stock, sellable_individually, sale_price, purchase_price FROM products WHERE barcode = ?').get(barcode);
       if (!existing) {
         existing = db.prepare(
-          `SELECT p.id, p.barcode, p.stock, p.sellable_individually FROM products p
+          `SELECT p.id, p.barcode, p.stock, p.sellable_individually, p.sale_price, p.purchase_price FROM products p
            JOIN product_barcodes pb ON pb.product_id = p.id WHERE pb.barcode = ?`
         ).get(barcode);
       }
@@ -902,6 +924,8 @@ router.post('/import-excel', authMiddleware, inventoryAdminMiddleware, (req, res
 
       let productId;
       if (existing) {
+        recordPriceChange(db, { productId: existing.id, field: 'sale_price', oldValue: existing.sale_price, newValue: salePrice, source: 'import de Excel', user: req.user });
+        recordPriceChange(db, { productId: existing.id, field: 'purchase_price', oldValue: existing.purchase_price, newValue: purchasePrice, source: 'import de Excel', user: req.user });
         db.prepare(
           `UPDATE products SET name=?, category_id=?, category_name=?, purchase_price=?, sale_price=?, stock=?, min_stock=?, supplier=?, supplier_id=COALESCE(?, supplier_id), unit_type=?, active=?, needs_review=?, updated_at=datetime('now') WHERE id=?`
         ).run(name, category.id, category.name, purchasePrice, salePrice, stock, minStock, supplier, supplierId, unitType, active, needsReview, existing.id);

@@ -26,12 +26,17 @@ export default function Purchases({ user }) {
   const [receivePurchase, setReceivePurchase] = useState(null)
   const [receiveItems, setReceiveItems] = useState([])
   const [products, setProducts] = useState([])
-  const [purchaseForm, setPurchaseForm] = useState({ supplier_id: '', invoice_number: '', notes: '', status: 'pending', items: [] })
+  const [purchaseForm, setPurchaseForm] = useState({ supplier_id: '', invoice_number: '', notes: '', status: 'pending', payment_type: 'cash', due_date: '', items: [] })
   const [productSearch, setProductSearch] = useState('')
   const [filteredProducts, setFilteredProducts] = useState([])
   const [showProductDropdown, setShowProductDropdown] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  // Cuentas por pagar (compras a crédito)
+  const [showPayableModal, setShowPayableModal] = useState(false)
+  const [payableData, setPayableData] = useState(null)
+  const [payModal, setPayModal] = useState(null) // compra a la que se abona
+  const [payForm, setPayForm] = useState({ amount: '', payment_method: 'cash', notes: '' })
 
   useEffect(() => { syncAndLoad() }, [])
 
@@ -121,10 +126,34 @@ export default function Purchases({ user }) {
   }
 
   const openNewPurchase = (supplier) => {
-    setPurchaseForm({ supplier_id: supplier.id, invoice_number: '', notes: '', status: 'pending', items: [] })
+    setPurchaseForm({ supplier_id: supplier.id, invoice_number: '', notes: '', status: 'pending', payment_type: 'cash', due_date: '', items: [] })
     setProductSearch('')
     setError('')
     setShowPurchaseModal(true)
+  }
+
+  const loadPayable = async () => {
+    try {
+      const data = await purchasesApi.accountsPayable()
+      setPayableData(data)
+    } catch (e) { setError(e.message) }
+  }
+
+  const openPayModal = (purchase) => {
+    setPayModal(purchase)
+    setPayForm({ amount: purchase.balance.toFixed(2), payment_method: 'cash', notes: '' })
+  }
+
+  const handleAddPayment = async () => {
+    const amount = parseFloat(payForm.amount)
+    if (!amount || amount <= 0) { setError('Monto inválido'); return }
+    try {
+      await purchasesApi.addPayment(payModal.id, { amount, payment_method: payForm.payment_method, notes: payForm.notes || null })
+      setPayModal(null)
+      await loadPayable()
+      if (selectedSupplier) loadPurchases(selectedSupplier.id)
+      setSuccess('Pago registrado')
+    } catch (e) { setError(e.message) }
   }
 
   const removeItem = (idx) => {
@@ -279,7 +308,10 @@ export default function Purchases({ user }) {
     <div className="purchases-container">
       <div className="page-header">
         <h2>Compras y Pedidos</h2>
-        <button className="btn btn-primary" onClick={openNewSupplier}>Nuevo Proveedor</button>
+        <div style={{display:'flex', gap:'0.5rem'}}>
+          <button className="btn btn-outline" onClick={() => { loadPayable(); setShowPayableModal(true) }}>Por Pagar</button>
+          <button className="btn btn-primary" onClick={openNewSupplier}>Nuevo Proveedor</button>
+        </div>
       </div>
 
       {error && <div className="alert alert-error" onClick={() => setError('')}>{error}</div>}
@@ -329,7 +361,14 @@ export default function Purchases({ user }) {
                       <tr key={p.id}>
                         <td>#{p.id}</td>
                         <td>{p.invoice_number || '-'}</td>
-                        <td>${(p.total || 0).toFixed(2)}</td>
+                        <td>
+                          ${(p.total || 0).toFixed(2)}
+                          {p.payment_type === 'credit' && p.status === 'completed' && (
+                            (p.total - (p.amount_paid || 0)) > 0.009
+                              ? <span className="badge badge-warning" style={{marginLeft:'0.35rem'}}>Debe ${(p.total - (p.amount_paid || 0)).toFixed(2)}</span>
+                              : <span className="badge badge-success" style={{marginLeft:'0.35rem'}}>Pagada</span>
+                          )}
+                        </td>
                         <td>{statusBadge(p.status)}</td>
                         <td>{formatDate(p.created_at, { day: 'numeric', month: 'short' })}</td>
                         <td>
@@ -409,6 +448,19 @@ export default function Purchases({ user }) {
                   <option value="completed">Compra directa (inventariar ahora)</option>
                 </select>
               </div>
+              <div className="form-group">
+                <label>Forma de pago</label>
+                <select className="input" value={purchaseForm.payment_type} onChange={e => setPurchaseForm({...purchaseForm, payment_type: e.target.value})}>
+                  <option value="cash">De contado (pagada)</option>
+                  <option value="credit">A crédito (se debe al proveedor)</option>
+                </select>
+              </div>
+              {purchaseForm.payment_type === 'credit' && (
+                <div className="form-group">
+                  <label>Fecha límite de pago</label>
+                  <input type="date" className="input" value={purchaseForm.due_date} onChange={e => setPurchaseForm({...purchaseForm, due_date: e.target.value})} />
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label>Notas</label>
@@ -557,6 +609,79 @@ export default function Purchases({ user }) {
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setShowDetailModal(false)}>Cerrar</button>
               <button className="btn btn-primary" onClick={() => printPurchase(detailPurchase)}>Imprimir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPayableModal && (
+        <div className="modal-overlay" onClick={() => setShowPayableModal(false)} onKeyDown={modalKeys(() => setShowPayableModal(false), () => setShowPayableModal(false))}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Cuentas por Pagar</h3>
+              <button className="btn btn-sm btn-outline" onClick={() => setShowPayableModal(false)}>Cerrar</button>
+            </div>
+            {!payableData ? <div className="loading">Cargando...</div> : (
+              <div className="modal-body">
+                <p style={{fontSize:'1.05rem'}}>Deuda total con proveedores: <strong>${(payableData.total_owed || 0).toFixed(2)}</strong></p>
+                {payableData.purchases.length === 0 ? (
+                  <p className="text-muted">No debes nada a ningún proveedor. 🎉</p>
+                ) : (
+                  <table className="table">
+                    <thead>
+                      <tr><th>Proveedor</th><th>Compra</th><th>Total</th><th>Pagado</th><th>Debe</th><th>Límite</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {payableData.purchases.map(p => (
+                        <tr key={p.id}>
+                          <td>{p.supplier_name}</td>
+                          <td>#{p.id}{p.invoice_number ? ` (${p.invoice_number})` : ''}</td>
+                          <td>${(p.total || 0).toFixed(2)}</td>
+                          <td>${(p.amount_paid || 0).toFixed(2)}</td>
+                          <td><strong>${(p.balance || 0).toFixed(2)}</strong></td>
+                          <td>
+                            {p.due_date
+                              ? <span className={p.overdue ? 'badge badge-error' : ''}>{formatDate(p.due_date)}{p.overdue ? ' ¡Vencida!' : ''}</span>
+                              : '-'}
+                          </td>
+                          <td><button className="btn btn-sm btn-primary" onClick={() => openPayModal(p)}>Abonar</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {payModal && (
+        <div className="modal-overlay" onKeyDown={modalKeys(() => setPayModal(null), handleAddPayment)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <h3>Abonar a compra #{payModal.id}</h3>
+            <p>{payModal.supplier_name} — saldo pendiente: <strong>${(payModal.balance || 0).toFixed(2)}</strong></p>
+            <div className="form-group">
+              <label>Monto a pagar *</label>
+              <input type="number" min="0.01" step="0.01" className="input-lg" value={payForm.amount}
+                onChange={e => setPayForm({...payForm, amount: e.target.value})} autoFocus />
+            </div>
+            <div className="form-group">
+              <label>Forma de pago</label>
+              <select className="input" value={payForm.payment_method} onChange={e => setPayForm({...payForm, payment_method: e.target.value})}>
+                <option value="cash">Efectivo (sale de la caja)</option>
+                <option value="transfer">Transferencia</option>
+                <option value="card">Tarjeta</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Notas</label>
+              <input type="text" className="input" value={payForm.notes} onChange={e => setPayForm({...payForm, notes: e.target.value})} />
+            </div>
+            {error && <div className="alert alert-error">{error}</div>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setPayModal(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleAddPayment}>Registrar Pago</button>
             </div>
           </div>
         </div>

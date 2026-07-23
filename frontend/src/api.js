@@ -121,6 +121,7 @@ export const products = {
   addBatch: (productId, data) => request(`/products/batches/${productId}`, { method: 'POST', body: JSON.stringify(data) }),
   deleteBatch: (batchId) => request(`/products/batches/${batchId}`, { method: 'DELETE' }),
   barcodes: (productId) => request(`/products/${productId}/barcodes`),
+  priceHistory: (productId) => request(`/products/${productId}/price-history`),
   addBarcode: (productId, barcode) => request(`/products/${productId}/barcodes`, { method: 'POST', body: JSON.stringify({ barcode }) }),
   deleteBarcode: (barcodeId) => request(`/products/barcodes/${barcodeId}`, { method: 'DELETE' }),
   obsolete: (days) => request(`/products/obsolete${days ? `?days=${days}` : ''}`),
@@ -206,6 +207,7 @@ export const accounting = {
   deleteExpense: (id) => request(`/accounting/expenses/${id}`, { method: 'DELETE' }),
   topProducts: (params) => request(`/accounting/top-products?${new URLSearchParams(params)}`),
   profit: (params) => request(`/accounting/profit?${new URLSearchParams(params)}`),
+  profitByProduct: (params) => request(`/accounting/profit-by-product?${new URLSearchParams(params || {})}`),
   cashMovements: (params) => request(`/accounting/cash-movements?${new URLSearchParams(params)}`),
   addWaste: (data) => request('/accounting/product-waste', { method: 'POST', body: JSON.stringify(data) }),
   listWaste: (params) => request(`/accounting/product-waste?${new URLSearchParams(params)}`),
@@ -305,6 +307,11 @@ export const purchases = {
   create: (data) => request('/purchases', { method: 'POST', body: JSON.stringify(data) }),
   receive: (id, items) => request(`/purchases/${id}/receive`, { method: 'PUT', body: JSON.stringify({ items }) }),
   cancel: (id) => request(`/purchases/${id}`, { method: 'DELETE' }),
+  // Cuentas por pagar (compras a crédito)
+  accountsPayable: () => request('/accounts-payable'),
+  payments: (id) => request(`/purchases/${id}/payments`),
+  addPayment: (id, data) => request(`/purchases/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
+  deletePayment: (paymentId) => request(`/purchases/payments/${paymentId}`, { method: 'DELETE' }),
 };
 
 export const settings = {

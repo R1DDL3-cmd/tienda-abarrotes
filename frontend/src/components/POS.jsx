@@ -576,14 +576,16 @@ export default function POS({ user, onLogout }) {
   }
 
   // El efectivo esperado lo calcula el backend (expectedCash en GET
-  // /accounting/cash-register): apertura + solo movimientos de efectivo real
-  // (ventas cash netas de cambio, abonos, gastos cash, retiros). Si el monto
-  // contado se aleja mucho de eso, se pide confirmar antes de guardarlo.
+  // /accounting/cash-register) — pero solo lo manda al ADMIN. Corte ciego:
+  // el cajero cuenta el dinero sin conocer el esperado (si lo conociera,
+  // podría "cuadrar" un faltante antes de reportarlo); el sistema guarda la
+  // diferencia de todos modos y el dueño la ve en Contabilidad.
   const confirmCashAmount = async (amount) => {
     if (!registerData) return true
-    const expected = registerData.expectedCash !== undefined
-      ? parseFloat(registerData.expectedCash || 0)
-      : parseFloat(registerData.opening_amount || 0) + parseFloat(registerData.totalSales || 0) - parseFloat(registerData.totalExpenses || 0)
+    if (registerData.expectedCash === undefined) {
+      return confirmDialog(`Vas a registrar ${formatMoney(amount)} como efectivo contado. ¿Es correcto?`)
+    }
+    const expected = parseFloat(registerData.expectedCash || 0)
     if (Math.abs(amount - expected) <= 1) return true
     return confirmDialog(`El efectivo esperado en caja es ${formatMoney(expected)}, pero ingresaste ${formatMoney(amount)} (diferencia de ${formatMoney(amount - expected)}). ¿Confirmas que ese es el efectivo real contado?`)
   }

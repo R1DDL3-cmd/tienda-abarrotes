@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { getDB } = require('../db');
-const { authMiddleware, purchasesMiddleware } = require('../middleware/auth');
+const { authMiddleware, purchasesMiddleware, adminMiddleware } = require('../middleware/auth');
 const { predictAll } = require('../services/predictions');
 const { businessToday } = require('../bizdate');
+const { recordPriceChange } = require('../services/priceHistory');
 
 router.use(authMiddleware);
 router.use(purchasesMiddleware);
@@ -231,9 +232,16 @@ router.get('/purchases/:id', (req, res) => {
 router.post('/purchases', (req, res) => {
   try {
     const db = getDB();
-    const { supplier_id, invoice_number, items, notes, status } = req.body;
+    const { supplier_id, invoice_number, items, notes, status, payment_type, due_date } = req.body;
     if (!supplier_id) return res.status(400).json({ error: 'El proveedor es obligatorio' });
     if (!items || !items.length) return res.status(400).json({ error: 'Debe agregar al menos un producto' });
+
+    // 'cash' (contado, el default de siempre) o 'credit' (a crédito: se debe
+    // al proveedor y el gasto se registra hasta que se paga).
+    const paymentType = payment_type === 'credit' ? 'credit' : 'cash';
+    if (due_date && !/^\d{4}-\d{2}-\d{2}$/.test(due_date)) {
+      return res.status(400).json({ error: 'Fecha de pago inválida' });
+    }
 
     const purchaseStatus = status === 'pending' ? 'pending' : 'completed';
     let subtotal = 0;
@@ -263,8 +271,8 @@ router.post('/purchases', (req, res) => {
     const transact = db.transaction(() => {
       // db.run() (a diferencia de db.prepare().run()) no devuelve lastInsertRowid
       // — por eso crear un pedido/compra estaba roto antes de este fix.
-      const result = db.prepare('INSERT INTO purchases (supplier_id, invoice_number, subtotal, tax, total, status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(supplier_id, invoice_number || '', subtotal, tax, total, purchaseStatus, notes || '', req.user.id);
+      const result = db.prepare('INSERT INTO purchases (supplier_id, invoice_number, subtotal, tax, total, status, notes, created_by, payment_type, due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(supplier_id, invoice_number || '', subtotal, tax, total, purchaseStatus, notes || '', req.user.id, paymentType, due_date || null);
 
       purchaseId = result.lastInsertRowid;
 
@@ -279,8 +287,13 @@ router.post('/purchases', (req, res) => {
             updateProductStock(item.product_id, item.quantity, req.user.id, 'purchase', purchaseId, `Compra #${purchaseId}`);
           }
         });
-        const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
-        recordPurchaseExpense(purchaseId, supplier?.name, total, invoice_number, req.user.id, req.user.name);
+        // Solo las compras de CONTADO son gasto inmediato — en una compra a
+        // crédito el dinero todavía no sale: el gasto se registra al pagarla
+        // (ver POST /purchases/:id/payments).
+        if (paymentType === 'cash') {
+          const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
+          recordPurchaseExpense(purchaseId, supplier?.name, total, invoice_number, req.user.id, req.user.name);
+        }
       }
     });
     transact();
@@ -339,6 +352,12 @@ router.put('/purchases/:id/receive', (req, res) => {
           // actualizarlo aquí mantiene precisos los cálculos de ganancia
           // (accounting.js /profit usa products.purchase_price).
           if (receivedPrice > 0) {
+            const before = db.prepare('SELECT purchase_price FROM products WHERE id = ?').get(item.product_id);
+            recordPriceChange(getDB(), {
+              productId: item.product_id, field: 'purchase_price',
+              oldValue: before ? before.purchase_price : null, newValue: receivedPrice,
+              source: `recepción de compra #${purchase.id}`, user: req.user,
+            });
             db.run('UPDATE products SET purchase_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [receivedPrice, item.product_id]);
           }
         }
@@ -349,12 +368,144 @@ router.put('/purchases/:id/receive', (req, res) => {
       db.run('UPDATE purchases SET status = ?, subtotal = ?, tax = ?, total = ? WHERE id = ?',
         ['completed', newSubtotal, newTax, newTotal, req.params.id]);
 
-      const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(purchase.supplier_id);
-      recordPurchaseExpense(purchase.id, supplier?.name, newTotal, purchase.invoice_number, req.user.id, req.user.name);
+      // Compra a crédito: el gasto se registra al pagarla, no al recibirla.
+      if ((purchase.payment_type || 'cash') === 'cash') {
+        const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(purchase.supplier_id);
+        recordPurchaseExpense(purchase.id, supplier?.name, newTotal, purchase.invoice_number, req.user.id, req.user.name);
+      }
     });
     transact();
 
     res.json({ message: 'Pedido recibido e inventariado' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// CUENTAS POR PAGAR (compras a crédito)
+// ============================================================
+
+// Resumen de deuda por proveedor + compras a crédito con saldo pendiente.
+router.get('/accounts-payable', (req, res) => {
+  try {
+    const db = getDB();
+    const today = businessToday();
+    const open = db.prepare(
+      `SELECT p.id, p.supplier_id, s.name AS supplier_name, p.invoice_number, p.total,
+              COALESCE(p.amount_paid, 0) AS amount_paid,
+              (p.total - COALESCE(p.amount_paid, 0)) AS balance,
+              p.due_date, p.created_at,
+              CASE WHEN p.due_date IS NOT NULL AND p.due_date < ? THEN 1 ELSE 0 END AS overdue
+       FROM purchases p JOIN suppliers s ON s.id = p.supplier_id
+       WHERE p.status = 'completed' AND p.payment_type = 'credit'
+         AND (p.total - COALESCE(p.amount_paid, 0)) > 0.009
+       ORDER BY overdue DESC, p.due_date ASC, p.created_at ASC`
+    ).all(today);
+
+    const bySupplier = {};
+    for (const p of open) {
+      if (!bySupplier[p.supplier_id]) {
+        bySupplier[p.supplier_id] = { supplier_id: p.supplier_id, supplier_name: p.supplier_name, total_owed: 0, purchases: 0, overdue: 0 };
+      }
+      bySupplier[p.supplier_id].total_owed += p.balance;
+      bySupplier[p.supplier_id].purchases += 1;
+      if (p.overdue) bySupplier[p.supplier_id].overdue += 1;
+    }
+
+    res.json({
+      total_owed: open.reduce((s, p) => s + p.balance, 0),
+      suppliers: Object.values(bySupplier).sort((a, b) => b.total_owed - a.total_owed),
+      purchases: open,
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.get('/purchases/:id/payments', (req, res) => {
+  try {
+    const db = getDB();
+    const payments = db.prepare('SELECT * FROM supplier_payments WHERE purchase_id = ? ORDER BY created_at ASC').all(req.params.id);
+    res.json({ payments });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Registrar un pago/abono a una compra a crédito. AQUÍ es donde nace el gasto
+// en contabilidad (y el movimiento de caja si fue en efectivo) — es cuando el
+// dinero realmente sale.
+router.post('/purchases/:id/payments', (req, res) => {
+  try {
+    const db = getDB();
+    const { amount, payment_method, notes } = req.body;
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'Monto inválido' });
+
+    const purchase = db.prepare('SELECT * FROM purchases WHERE id = ?').get(req.params.id);
+    if (!purchase) return res.status(404).json({ error: 'Compra no encontrada' });
+    if (purchase.status !== 'completed') return res.status(400).json({ error: 'Solo se pueden pagar compras recibidas' });
+    if ((purchase.payment_type || 'cash') !== 'credit') return res.status(400).json({ error: 'Esta compra fue de contado — no tiene saldo por pagar' });
+
+    const balance = purchase.total - (purchase.amount_paid || 0);
+    if (amt > balance + 0.009) {
+      return res.status(400).json({ error: `El pago excede el saldo pendiente ($${balance.toFixed(2)})` });
+    }
+
+    const method = payment_method === 'transfer' || payment_method === 'card' ? payment_method : 'cash';
+    const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(purchase.supplier_id);
+    let paymentId;
+
+    const transact = db.transaction(() => {
+      const result = db.prepare(
+        `INSERT INTO supplier_payments (purchase_id, supplier_id, amount, payment_method, notes, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(purchase.id, purchase.supplier_id, amt, method, notes || null, req.user.id, req.user.name || '');
+      paymentId = result.lastInsertRowid;
+
+      db.prepare('UPDATE purchases SET amount_paid = COALESCE(amount_paid, 0) + ? WHERE id = ?').run(amt, purchase.id);
+
+      db.prepare(
+        `INSERT INTO expenses (description, amount, category, payment_method, notes, created_by, reference_type, reference_id)
+         VALUES (?, ?, 'Pago a proveedor', ?, ?, ?, 'purchase_payment', ?)`
+      ).run(`Pago a ${supplier?.name || 'proveedor'} — compra #${purchase.id}`, amt, method, notes || null, req.user.id, paymentId);
+
+      if (method === 'cash') {
+        const register = db.prepare('SELECT id FROM cash_register WHERE date = ?').get(businessToday());
+        if (register) {
+          db.prepare(
+            `INSERT INTO cash_movements (cash_register_id, type, description, amount, reference_id, reference_type, created_by, created_by_name, created_at)
+             VALUES (?, 'expense', ?, ?, ?, 'purchase_payment', ?, ?, datetime('now'))`
+          ).run(register.id, `Pago a proveedor ${supplier?.name || ''} — compra #${purchase.id}`, amt, paymentId, req.user.id, req.user.name || '');
+        }
+      }
+    });
+    transact();
+
+    const updated = db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchase.id);
+    res.status(201).json({ payment_id: paymentId, purchase: updated, balance: updated.total - updated.amount_paid });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Eliminar un pago registrado por error (solo admin): revierte el saldo, el
+// gasto y el movimiento de caja que ese pago generó.
+router.delete('/purchases/payments/:paymentId', adminMiddleware, (req, res) => {
+  try {
+    const db = getDB();
+    const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(req.params.paymentId);
+    if (!payment) return res.status(404).json({ error: 'Pago no encontrado' });
+
+    const transact = db.transaction(() => {
+      db.prepare('DELETE FROM supplier_payments WHERE id = ?').run(payment.id);
+      db.prepare('UPDATE purchases SET amount_paid = COALESCE(amount_paid, 0) - ? WHERE id = ?').run(payment.amount, payment.purchase_id);
+      db.prepare("DELETE FROM expenses WHERE reference_type = 'purchase_payment' AND reference_id = ?").run(payment.id);
+      db.prepare("DELETE FROM cash_movements WHERE reference_type = 'purchase_payment' AND reference_id = ?").run(payment.id);
+    });
+    transact();
+    res.json({ success: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -367,6 +518,11 @@ router.delete('/purchases/:id', (req, res) => {
     // Antes esto tronaba con un error críptico al leer purchase.status de undefined
     if (!purchase) return res.status(404).json({ error: 'Compra no encontrada' });
     if (purchase.status === 'cancelled') return res.status(400).json({ error: 'Esta compra ya fue cancelada' });
+    // Con pagos hechos, cancelar dejaría dinero pagado "en el aire": primero
+    // hay que eliminar los pagos (admin) y luego cancelar.
+    if ((purchase.amount_paid || 0) > 0.009) {
+      return res.status(400).json({ error: 'Esta compra tiene pagos registrados. Elimina primero sus pagos y vuelve a intentar.' });
+    }
 
     const transact = db.transaction(() => {
       if (purchase.status === 'completed') {

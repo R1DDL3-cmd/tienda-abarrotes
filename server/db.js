@@ -706,6 +706,49 @@ const SCHEMA_MIGRATIONS = [
       }
     } catch (e) {}
   },
+  // v13: cuentas por pagar a proveedores. payment_type distingue compras de
+  // contado (comportamiento de siempre: el gasto se registra al recibir) de
+  // compras a crédito (el gasto nace cuando se PAGA, no cuando llega la
+  // mercancía — el dinero no ha salido todavía). supplier_payments guarda
+  // cada abono/pago hecho a una compra a crédito.
+  (db) => {
+    try { db.exec("ALTER TABLE purchases ADD COLUMN payment_type TEXT DEFAULT 'cash'"); } catch (e) {}
+    try { db.exec('ALTER TABLE purchases ADD COLUMN due_date DATE'); } catch (e) {}
+    try { db.exec('ALTER TABLE purchases ADD COLUMN amount_paid REAL DEFAULT 0'); } catch (e) {}
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS supplier_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        purchase_id INTEGER NOT NULL,
+        supplier_id INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        payment_method TEXT DEFAULT 'cash',
+        notes TEXT,
+        created_by INTEGER,
+        created_by_name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_supplier_payments_purchase ON supplier_payments(purchase_id);
+      CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier ON supplier_payments(supplier_id);
+    `);
+  },
+  // v14: historial de cambios de precio — quién cambió qué precio, cuándo y
+  // de cuánto a cuánto. Control antifraude y de errores de captura.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS price_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        field TEXT NOT NULL CHECK(field IN ('sale_price', 'purchase_price', 'individual_price')),
+        old_value REAL,
+        new_value REAL,
+        source TEXT,
+        changed_by INTEGER,
+        changed_by_name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id);
+    `);
+  },
 ];
 
 function getSchemaVersion(db) {
