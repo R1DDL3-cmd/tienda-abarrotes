@@ -218,6 +218,19 @@ test('Fase B', async (t) => {
     assert.ok(asCashier.body.date, 'el resto de la caja sí lo ve');
   });
 
+  await t.test('el cajero NO puede ver el proyector de ventas (datos sensibles)', async () => {
+    for (const ep of ['/accounting/predictions', '/accounting/predictions/products', '/accounting/risk', `/accounting/recommendation/${productId}`]) {
+      const r = await api(ep, { token: cashier });
+      assert.strictEqual(r.status, 403, `${ep} debe estar bloqueado para el cajero`);
+    }
+    // El admin sí puede
+    const ok = await api('/accounting/predictions', { token: admin });
+    assert.strictEqual(ok.status, 200);
+    // Pero la sugerencia de reposición para armar compras SÍ la puede usar el cajero
+    const order = await api(`/suppliers/${supplierId}/suggested-order`, { token: cashier });
+    assert.strictEqual(order.status, 200, 'el cajero sí puede pedir la sugerencia de reposición al comprar');
+  });
+
   await t.test('B5: la diferencia se guarda de todos modos al cerrar', async () => {
     // El cajero cierra contando $80 (esperado real: 100 apertura + 100 venta - 100 pago = 100)
     const close = await api('/accounting/cash-register', { method: 'PUT', token: cashier, body: { closing_amount: 80 } });

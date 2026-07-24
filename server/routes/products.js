@@ -251,6 +251,119 @@ router.post('/', authMiddleware, inventoryAdminMiddleware, (req, res) => {
   }
 });
 
+// Edición masiva: aplica los mismos cambios a varios productos de un jalón.
+// `changes` solo trae los campos que se quieren tocar (los demás no se
+// modifican). Precios: valor fijo (sale_price) O ajuste porcentual
+// (sale_price_pct, ej. 10 = subir 10%, -5 = bajar 5%) — nunca ambos a la vez.
+// Debe ir ANTES de PUT /:id: si no, Express captura "bulk" como :id.
+router.put('/bulk', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  try {
+    const db = getDB();
+    const { ids, changes } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Selecciona al menos un producto' });
+    }
+    if (!changes || typeof changes !== 'object' || Object.keys(changes).length === 0) {
+      return res.status(400).json({ error: 'Indica al menos un cambio' });
+    }
+
+    // Validaciones de valores absolutos no negativos
+    for (const [label, key] of [['precio de venta', 'sale_price'], ['precio de compra', 'purchase_price'], ['stock mínimo', 'min_stock']]) {
+      if (changes[key] !== undefined && changes[key] !== null && changes[key] !== '' &&
+          (!Number.isFinite(Number(changes[key])) || Number(changes[key]) < 0)) {
+        return res.status(400).json({ error: `Valor inválido en ${label}` });
+      }
+    }
+    for (const key of ['sale_price_pct', 'purchase_price_pct']) {
+      if (changes[key] !== undefined && changes[key] !== null && changes[key] !== '' &&
+          !Number.isFinite(Number(changes[key]))) {
+        return res.status(400).json({ error: 'Porcentaje inválido' });
+      }
+    }
+
+    // Resolver categoría/proveedor (nombre en espejo) una sola vez
+    let categoryName;
+    if (changes.category_id !== undefined && changes.category_id !== '' && changes.category_id !== null) {
+      const cat = db.prepare('SELECT name FROM categories WHERE id = ?').get(changes.category_id);
+      if (!cat) return res.status(400).json({ error: 'Categoría no encontrada' });
+      categoryName = cat.name;
+    }
+    let supplierName;
+    if (changes.supplier_id !== undefined && changes.supplier_id !== '' && changes.supplier_id !== null) {
+      const sup = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(changes.supplier_id);
+      if (!sup) return res.status(400).json({ error: 'Proveedor no encontrado' });
+      supplierName = sup.name;
+    }
+
+    let updated = 0;
+    const transaction = db.transaction(() => {
+      for (const id of ids) {
+        const p = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
+        if (!p) continue;
+
+        const sets = [];
+        const params = [];
+
+        if (changes.category_id !== undefined) {
+          if (changes.category_id === null || changes.category_id === '') {
+            sets.push('category_id = NULL', 'category_name = NULL');
+          } else {
+            sets.push('category_id = ?', 'category_name = ?');
+            params.push(changes.category_id, categoryName);
+          }
+        }
+        if (supplierName !== undefined) {
+          sets.push('supplier_id = ?', 'supplier = ?');
+          params.push(changes.supplier_id, supplierName);
+        }
+        if (changes.unit_type && ['unit', 'kg', 'l'].includes(changes.unit_type)) {
+          sets.push('unit_type = ?');
+          params.push(changes.unit_type);
+        }
+        if (changes.min_stock !== undefined && changes.min_stock !== '' && changes.min_stock !== null) {
+          sets.push('min_stock = ?');
+          params.push(Number(changes.min_stock));
+        }
+        if (changes.active !== undefined && changes.active !== '' && changes.active !== null) {
+          sets.push('active = ?');
+          params.push(changes.active ? 1 : 0);
+        }
+
+        // Precios: fijo o porcentual. Se registra en el historial de precios.
+        const applyPrice = (field, pctKey) => {
+          let newVal;
+          if (changes[field] !== undefined && changes[field] !== '' && changes[field] !== null) {
+            newVal = Math.round(Number(changes[field]) * 100) / 100;
+          } else if (changes[pctKey] !== undefined && changes[pctKey] !== '' && changes[pctKey] !== null) {
+            const base = Number(p[field]) || 0;
+            newVal = Math.round(base * (1 + Number(changes[pctKey]) / 100) * 100) / 100;
+            if (newVal < 0) newVal = 0;
+          } else {
+            return;
+          }
+          recordPriceChange(db, { productId: id, field, oldValue: p[field], newValue: newVal, source: 'edición masiva', user: req.user });
+          sets.push(`${field} = ?`);
+          params.push(newVal);
+        };
+        applyPrice('sale_price', 'sale_price_pct');
+        applyPrice('purchase_price', 'purchase_price_pct');
+
+        if (sets.length === 0) continue;
+        sets.push("updated_at = datetime('now')");
+        params.push(id);
+        db.prepare(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+        updated++;
+      }
+    });
+    transaction();
+
+    res.json({ success: true, updated });
+  } catch (e) {
+    console.error('Error en edición masiva:', e);
+    res.status(500).json({ error: 'Error al editar productos: ' + e.message });
+  }
+});
+
 router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
   const db = getDB();
   const { name, barcode, category_id, purchase_price, sale_price, stock, min_stock, supplier, supplier_id, unit_type, sellable_individually, units_per_package, individual_price } = req.body;

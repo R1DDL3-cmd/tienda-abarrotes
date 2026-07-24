@@ -61,6 +61,22 @@ export default function Inventory({ user, onLogout }) {
   // al terminar la importación. null = sin pendientes.
   const [importPending, setImportPending] = useState(null)
   const [importSaving, setImportSaving] = useState(false)
+  // Edición masiva: ids seleccionados + modal con los campos a cambiar.
+  const [selectedIds, setSelectedIds] = useState(new Set())
+  const [showBulkModal, setShowBulkModal] = useState(false)
+  const [bulkSaving, setBulkSaving] = useState(false)
+  // Cada campo tiene "enabled" (si se aplica) y "value". priceMode elige entre
+  // fijar un valor o ajustar por porcentaje.
+  const emptyBulk = () => ({
+    category_id: { enabled: false, value: '' },
+    supplier_id: { enabled: false, value: '' },
+    unit_type: { enabled: false, value: 'unit' },
+    min_stock: { enabled: false, value: '' },
+    active: { enabled: false, value: '1' },
+    sale_price: { enabled: false, mode: 'fixed', value: '' },
+    purchase_price: { enabled: false, mode: 'fixed', value: '' },
+  })
+  const [bulkForm, setBulkForm] = useState(emptyBulk())
 
   const loadProducts = useCallback(async () => {
     try {
@@ -454,6 +470,71 @@ export default function Inventory({ user, onLogout }) {
     } catch (e) {}
   }
 
+  // --- Selección múltiple / edición masiva ---
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  const allVisibleSelected = productList.length > 0 && productList.every(p => selectedIds.has(p.id))
+  const toggleSelectAllVisible = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allVisibleSelected) {
+        productList.forEach(p => next.delete(p.id))
+      } else {
+        productList.forEach(p => next.add(p.id))
+      }
+      return next
+    })
+  }
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const openBulkModal = () => {
+    if (selectedIds.size === 0) { setError('Selecciona al menos un producto'); return }
+    setBulkForm(emptyBulk())
+    setError('')
+    setShowBulkModal(true)
+  }
+
+  const setBulkField = (field, patch) => {
+    setBulkForm(prev => ({ ...prev, [field]: { ...prev[field], ...patch } }))
+  }
+
+  const handleBulkSubmit = async () => {
+    const changes = {}
+    const b = bulkForm
+    if (b.category_id.enabled) changes.category_id = b.category_id.value === '' ? null : parseInt(b.category_id.value)
+    if (b.supplier_id.enabled && b.supplier_id.value !== '') changes.supplier_id = parseInt(b.supplier_id.value)
+    if (b.unit_type.enabled) changes.unit_type = b.unit_type.value
+    if (b.min_stock.enabled && b.min_stock.value !== '') changes.min_stock = parseFloat(b.min_stock.value)
+    if (b.active.enabled) changes.active = b.active.value === '1'
+    if (b.sale_price.enabled && b.sale_price.value !== '') {
+      if (b.sale_price.mode === 'pct') changes.sale_price_pct = parseFloat(b.sale_price.value)
+      else changes.sale_price = parseFloat(b.sale_price.value)
+    }
+    if (b.purchase_price.enabled && b.purchase_price.value !== '') {
+      if (b.purchase_price.mode === 'pct') changes.purchase_price_pct = parseFloat(b.purchase_price.value)
+      else changes.purchase_price = parseFloat(b.purchase_price.value)
+    }
+    if (Object.keys(changes).length === 0) { setError('Activa al menos un campo para cambiar'); return }
+
+    setBulkSaving(true)
+    setError('')
+    try {
+      const res = await products.bulkUpdate([...selectedIds], changes)
+      setShowBulkModal(false)
+      clearSelection()
+      await loadProducts()
+      await loadCategories()
+      setSuccess(`${res.updated} producto(s) actualizados`)
+      setTimeout(() => setSuccess(''), 4000)
+    } catch (e) { setError(e.message) }
+    setBulkSaving(false)
+  }
+
   const handleWasteSubmit = async () => {
     if (!wasteForm.product_id) { setError('Seleccione un producto'); return }
     if (!wasteForm.quantity || parseFloat(wasteForm.quantity) <= 0) { setError('Cantidad inválida'); return }
@@ -526,10 +607,21 @@ export default function Inventory({ user, onLogout }) {
             </button>
           </div>
 
+          {selectedIds.size > 0 && (
+            <div className="bulk-bar" style={{display:'flex', alignItems:'center', gap:'0.75rem', padding:'0.6rem 0.9rem', background:'var(--bg-accent)', borderRadius:'var(--radius)', margin:'0.5rem 0'}}>
+              <strong>{selectedIds.size} producto(s) seleccionados</strong>
+              <button className="btn btn-sm btn-primary" onClick={openBulkModal}>Editar seleccionados</button>
+              <button className="btn btn-sm btn-outline" onClick={clearSelection}>Quitar selección</button>
+            </div>
+          )}
+
           <div className="table-responsive">
             <table className="table">
               <thead>
                 <tr>
+                  <th style={{width:'32px', textAlign:'center'}}>
+                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} title="Seleccionar todos los de esta página" />
+                  </th>
                   <th>Código</th>
                   <th>Nombre</th>
                   <th>Categoría</th>
@@ -544,7 +636,10 @@ export default function Inventory({ user, onLogout }) {
               </thead>
               <tbody>
                 {productList.map(p => (
-                  <tr key={p.id} className={p.stock <= p.min_stock ? 'row-warning' : ''}>
+                  <tr key={p.id} className={`${p.stock <= p.min_stock ? 'row-warning' : ''} ${selectedIds.has(p.id) ? 'row-selected' : ''}`}>
+                    <td style={{textAlign:'center'}}>
+                      <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelect(p.id)} />
+                    </td>
                     <td style={{fontSize:'0.8rem'}}>{p.barcode || '-'}</td>
                     <td>
                       <strong>{p.name}</strong>
@@ -753,6 +848,90 @@ export default function Inventory({ user, onLogout }) {
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setShowLabelsModal(false)}>Cancelar</button>
               <button className="btn btn-primary" onClick={printLabels}>Imprimir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkModal && (
+        <div className="modal-overlay" onKeyDown={modalKeys(() => setShowBulkModal(false), handleBulkSubmit)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <h3>Editar {selectedIds.size} producto(s) a la vez</h3>
+            <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'0.75rem'}}>
+              Activa la casilla de cada dato que quieras cambiar en TODOS los productos seleccionados. Lo que dejes sin activar no se toca.
+            </p>
+            <div style={{display:'flex', flexDirection:'column', gap:'0.6rem'}}>
+
+              <div className="bulk-row" style={{display:'flex', alignItems:'center', gap:'0.6rem'}}>
+                <input type="checkbox" checked={bulkForm.category_id.enabled} onChange={e => setBulkField('category_id', { enabled: e.target.checked })} />
+                <label style={{width:'150px', margin:0}}>Categoría</label>
+                <select className="input" disabled={!bulkForm.category_id.enabled} value={bulkForm.category_id.value} onChange={e => setBulkField('category_id', { value: e.target.value })} style={{flex:1}}>
+                  <option value="">Sin categoría</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+
+              <div className="bulk-row" style={{display:'flex', alignItems:'center', gap:'0.6rem'}}>
+                <input type="checkbox" checked={bulkForm.supplier_id.enabled} onChange={e => setBulkField('supplier_id', { enabled: e.target.checked })} />
+                <label style={{width:'150px', margin:0}}>Proveedor</label>
+                <select className="input" disabled={!bulkForm.supplier_id.enabled} value={bulkForm.supplier_id.value} onChange={e => setBulkField('supplier_id', { value: e.target.value })} style={{flex:1}}>
+                  <option value="">Elegir proveedor...</option>
+                  {supplierList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+
+              <div className="bulk-row" style={{display:'flex', alignItems:'center', gap:'0.6rem'}}>
+                <input type="checkbox" checked={bulkForm.unit_type.enabled} onChange={e => setBulkField('unit_type', { enabled: e.target.checked })} />
+                <label style={{width:'150px', margin:0}}>Tipo de venta</label>
+                <select className="input" disabled={!bulkForm.unit_type.enabled} value={bulkForm.unit_type.value} onChange={e => setBulkField('unit_type', { value: e.target.value })} style={{flex:1}}>
+                  <option value="unit">Unidad</option>
+                  <option value="kg">Peso (kg)</option>
+                  <option value="l">Volumen (L)</option>
+                </select>
+              </div>
+
+              <div className="bulk-row" style={{display:'flex', alignItems:'center', gap:'0.6rem'}}>
+                <input type="checkbox" checked={bulkForm.min_stock.enabled} onChange={e => setBulkField('min_stock', { enabled: e.target.checked })} />
+                <label style={{width:'150px', margin:0}}>Stock mínimo</label>
+                <input type="number" min="0" step="0.5" className="input" disabled={!bulkForm.min_stock.enabled} value={bulkForm.min_stock.value} onChange={e => setBulkField('min_stock', { value: e.target.value })} style={{flex:1}} placeholder="Nuevo stock mínimo" />
+              </div>
+
+              <div className="bulk-row" style={{display:'flex', alignItems:'center', gap:'0.6rem'}}>
+                <input type="checkbox" checked={bulkForm.active.enabled} onChange={e => setBulkField('active', { enabled: e.target.checked })} />
+                <label style={{width:'150px', margin:0}}>Estado</label>
+                <select className="input" disabled={!bulkForm.active.enabled} value={bulkForm.active.value} onChange={e => setBulkField('active', { value: e.target.value })} style={{flex:1}}>
+                  <option value="1">Activo (se vende)</option>
+                  <option value="0">Inactivo (oculto)</option>
+                </select>
+              </div>
+
+              <div className="bulk-row" style={{display:'flex', alignItems:'center', gap:'0.6rem'}}>
+                <input type="checkbox" checked={bulkForm.sale_price.enabled} onChange={e => setBulkField('sale_price', { enabled: e.target.checked })} />
+                <label style={{width:'150px', margin:0}}>Precio de venta</label>
+                <select className="input" disabled={!bulkForm.sale_price.enabled} value={bulkForm.sale_price.mode} onChange={e => setBulkField('sale_price', { mode: e.target.value })} style={{width:'150px'}}>
+                  <option value="fixed">Fijar en</option>
+                  <option value="pct">Ajustar %</option>
+                </select>
+                <input type="number" step="0.01" className="input" disabled={!bulkForm.sale_price.enabled} value={bulkForm.sale_price.value} onChange={e => setBulkField('sale_price', { value: e.target.value })} style={{flex:1}} placeholder={bulkForm.sale_price.mode === 'pct' ? 'Ej. 10 = +10%, -5 = -5%' : 'Nuevo precio'} />
+              </div>
+
+              <div className="bulk-row" style={{display:'flex', alignItems:'center', gap:'0.6rem'}}>
+                <input type="checkbox" checked={bulkForm.purchase_price.enabled} onChange={e => setBulkField('purchase_price', { enabled: e.target.checked })} />
+                <label style={{width:'150px', margin:0}}>Precio de compra</label>
+                <select className="input" disabled={!bulkForm.purchase_price.enabled} value={bulkForm.purchase_price.mode} onChange={e => setBulkField('purchase_price', { mode: e.target.value })} style={{width:'150px'}}>
+                  <option value="fixed">Fijar en</option>
+                  <option value="pct">Ajustar %</option>
+                </select>
+                <input type="number" step="0.01" className="input" disabled={!bulkForm.purchase_price.enabled} value={bulkForm.purchase_price.value} onChange={e => setBulkField('purchase_price', { value: e.target.value })} style={{flex:1}} placeholder={bulkForm.purchase_price.mode === 'pct' ? 'Ej. 10 = +10%, -5 = -5%' : 'Nuevo costo'} />
+              </div>
+
+            </div>
+            {error && <div className="alert alert-error" style={{marginTop:'0.6rem'}}>{error}</div>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" disabled={bulkSaving} onClick={() => { setShowBulkModal(false); setError('') }}>Cancelar</button>
+              <button className="btn btn-primary" disabled={bulkSaving} onClick={handleBulkSubmit}>
+                {bulkSaving ? 'Guardando...' : `Aplicar a ${selectedIds.size} producto(s)`}
+              </button>
             </div>
           </div>
         </div>

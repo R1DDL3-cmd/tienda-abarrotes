@@ -26,11 +26,18 @@ function shade(hex, percent) {
   return '#' + (0x1000000 + r * 0x10000 + g * 0x100 + b).toString(16).slice(1)
 }
 
+// Cada color de la paleta mapea a una o más variables CSS. Los que tienen
+// tono claro/oscuro derivan esos tonos automáticamente (shade). Los de la
+// barra de navegación (header_bg, header_text) y el acento son de una sola
+// variable.
 const PALETTE_VARS = {
   primary: ['--primary', '--primary-light', '--primary-dark'],
   success: ['--success', '--success-light', '--success-dark'],
   danger: ['--danger', '--danger-light', '--danger-dark'],
-  warning: ['--warning', null, '--warning-dark']
+  warning: ['--warning', null, '--warning-dark'],
+  header_bg: ['--header-bg', null, null],
+  header_text: ['--header-text', null, null],
+  accent: ['--bg-accent', null, null]
 }
 
 export function applyPalette(colors) {

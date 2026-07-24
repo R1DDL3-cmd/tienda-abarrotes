@@ -111,6 +111,7 @@ export const products = {
   expiring: () => request('/products/expiring'),
   create: (data) => request('/products', { method: 'POST', body: JSON.stringify(data) }),
   update: (id, data) => request(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  bulkUpdate: (ids, changes) => request('/products/bulk', { method: 'PUT', body: JSON.stringify({ ids, changes }) }),
   remove: (id) => request(`/products/${id}`, { method: 'DELETE' }),
   categories: () => request('/products/categories'),
   createCategory: (name) => request('/products/categories', { method: 'POST', body: JSON.stringify({ name }) }),

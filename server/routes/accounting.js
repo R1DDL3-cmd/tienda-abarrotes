@@ -649,8 +649,13 @@ router.put('/withdrawals/:id/cancel', authMiddleware, adminMiddleware, (req, res
 // ============================================================
 // Nexo Systems — Endpoints de Prediccion
 // ============================================================
+// SOLO ADMIN: el proyector expone datos sensibles del negocio (pronósticos de
+// venta, márgenes, riesgo de sobreinventario, resumen ejecutivo). El cajero
+// no debe verlos. La sugerencia de reposición que el cajero SÍ usa al armar
+// una compra vive aparte, en /suppliers/:id/suggested-order (calcula cantidades
+// a reponer sin exponer ventas ni utilidades).
 
-router.get('/predictions', authMiddleware, (req, res) => {
+router.get('/predictions', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const summary = getExecutiveSummary(db);
@@ -660,7 +665,7 @@ router.get('/predictions', authMiddleware, (req, res) => {
   }
 });
 
-router.get('/predictions/products', authMiddleware, (req, res) => {
+router.get('/predictions/products', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const predictions = predictAll(db);
@@ -670,7 +675,7 @@ router.get('/predictions/products', authMiddleware, (req, res) => {
   }
 });
 
-router.get('/predictions/categories', authMiddleware, (req, res) => {
+router.get('/predictions/categories', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const categories = predictByCategory(db);
@@ -680,7 +685,7 @@ router.get('/predictions/categories', authMiddleware, (req, res) => {
   }
 });
 
-router.get('/predictions/:productId', authMiddleware, (req, res) => {
+router.get('/predictions/:productId', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const prediction = predictProduct(parseInt(req.params.productId), db);
@@ -694,7 +699,7 @@ router.get('/predictions/:productId', authMiddleware, (req, res) => {
 // ============================================================
 // RECOMENDACION DE COMPRA
 // ============================================================
-router.get('/recommendation/:productId', authMiddleware, (req, res) => {
+router.get('/recommendation/:productId', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const product = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.productId);
@@ -729,7 +734,7 @@ router.get('/recommendation/:productId', authMiddleware, (req, res) => {
 // ============================================================
 // RIESGO DE FALTANTE / SOBREINVENTARIO
 // ============================================================
-router.get('/risk', authMiddleware, (req, res) => {
+router.get('/risk', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const filter = req.query.filter || 'all'; // stockout | overstock | all
@@ -775,7 +780,7 @@ router.get('/risk', authMiddleware, (req, res) => {
 // ============================================================
 // RETROALIMENTACION DE VENTAS REALES (para reentrenamiento)
 // ============================================================
-router.post('/predictions/feedback', authMiddleware, (req, res) => {
+router.post('/predictions/feedback', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const { product_id, predicted_qty, actual_qty, forecast_date } = req.body;
@@ -797,7 +802,7 @@ router.post('/predictions/feedback', authMiddleware, (req, res) => {
 // ============================================================
 // SALUD / ESTADO DEL MODELO
 // ============================================================
-router.get('/predictions/health', authMiddleware, (req, res) => {
+router.get('/predictions/health', authMiddleware, adminMiddleware, (req, res) => {
   try {
     const db = getDB();
     const totalProducts = db.prepare("SELECT COUNT(*) as count FROM products WHERE active = 1").get().count;

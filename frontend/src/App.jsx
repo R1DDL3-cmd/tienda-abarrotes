@@ -107,7 +107,10 @@ export default function App() {
 
   const loadPalette = () => {
     settingsApi.getPalette()
-      .then(p => applyPalette({ primary: p.palette_primary, success: p.palette_success, danger: p.palette_danger, warning: p.palette_warning }))
+      .then(p => applyPalette({
+        primary: p.palette_primary, success: p.palette_success, danger: p.palette_danger, warning: p.palette_warning,
+        header_bg: p.palette_header_bg, header_text: p.palette_header_text, accent: p.palette_accent
+      }))
       .catch(() => {})
   }
 
@@ -155,15 +158,14 @@ export default function App() {
     }
   }
 
-  // El efectivo esperado se calcula igual que en el backend (server/routes/
-  // accounting.js): apertura + ventas - gastos. Si lo que se cuenta en caja
-  // se aleja mucho de eso, se pide confirmar antes de guardarlo — antes se
-  // aceptaba cualquier monto (incluido $0 con efectivo real en caja) sin
-  // ningún aviso, lo que podía esconder un faltante real o un error de captura.
+  // Conteo de caja al cerrar sesión desde cualquier pantalla. Corte ciego: el
+  // backend solo manda expectedCash al admin, así que al cajero solo se le
+  // confirma el monto que contó (sin revelarle el esperado); al admin sí se
+  // le avisa si la diferencia es grande antes de guardar.
   const handleCashCountSubmit = async () => {
     const amount = parseFloat(cashCountAmount) || 0
-    if (registerForClose) {
-      const expected = parseFloat(registerForClose.opening_amount || 0) + parseFloat(registerForClose.totalSales || 0) - parseFloat(registerForClose.totalExpenses || 0)
+    if (registerForClose && registerForClose.expectedCash !== undefined) {
+      const expected = parseFloat(registerForClose.expectedCash || 0)
       if (Math.abs(amount - expected) > 1) {
         const proceed = await confirmDialog(`El efectivo esperado en caja es ${formatMoney(expected)}, pero ingresaste ${formatMoney(amount)} (diferencia de ${formatMoney(amount - expected)}). ¿Confirmas que ese es el efectivo real contado?`)
         if (!proceed) return
@@ -207,7 +209,7 @@ export default function App() {
           </ProtectedRoute>
         } />
         <Route path="/accounting" element={<ProtectedRoute user={user} allowedRoles={['admin']}><AdminLayout user={user} onLogout={handleLogout}><Accounting user={user} onLogout={handleLogout} /></AdminLayout></ProtectedRoute>} />
-        <Route path="/predictions" element={<ProtectedRoute user={user} allowedRoles={['admin', 'cashier']}><PredictionsPage user={user} onLogout={doLogout} /></ProtectedRoute>} />
+        <Route path="/predictions" element={<ProtectedRoute user={user} allowedRoles={['admin']}><PredictionsPage user={user} onLogout={handleLogout} /></ProtectedRoute>} />
         <Route path="/customers" element={<ProtectedRoute user={user} allowedRoles={['admin']}><AdminLayout user={user} onLogout={handleLogout}><Customers user={user} onLogout={handleLogout} /></AdminLayout></ProtectedRoute>} />
         <Route path="/purchases" element={<ProtectedRoute user={user} allowedRoles={['admin', 'cashier']}><AdminLayout user={user} onLogout={handleLogout}><Purchases user={user} /></AdminLayout></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute user={user} allowedRoles={['admin']}><AdminLayout user={user} onLogout={handleLogout}><Settings user={user} /></AdminLayout></ProtectedRoute>} />

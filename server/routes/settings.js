@@ -36,22 +36,23 @@ router.put('/store', authMiddleware, adminMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
-// Colores de marca (no toda la paleta: fondo/texto/bordes siguen controlados
-// por el tema claro/oscuro en frontend/src/theme.js). Vacío = usar el default
-// del tema activo, no forzar ningún color.
-const PALETTE_KEYS = ['palette_primary', 'palette_success', 'palette_danger', 'palette_warning'];
+// Colores de marca personalizables. Vacío = usar el default del tema
+// claro/oscuro activo, no forzar ningún color. Incluye los colores de la
+// barra de navegación superior (header_bg / header_text) para que la tienda
+// pueda ponerle su color de marca a la barra.
+const PALETTE_KEYS = [
+  'palette_primary', 'palette_success', 'palette_danger', 'palette_warning',
+  'palette_header_bg', 'palette_header_text', 'palette_accent'
+];
 
 router.get('/palette', authMiddleware, (req, res) => {
   const db = getDB();
   const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${PALETTE_KEYS.map(() => '?').join(',')})`).all(...PALETTE_KEYS);
   const byKey = {};
   for (const r of rows) byKey[r.key] = r.value;
-  res.json({
-    palette_primary: byKey.palette_primary || '',
-    palette_success: byKey.palette_success || '',
-    palette_danger: byKey.palette_danger || '',
-    palette_warning: byKey.palette_warning || ''
-  });
+  const out = {};
+  for (const k of PALETTE_KEYS) out[k] = byKey[k] || '';
+  res.json(out);
 });
 
 router.put('/palette', authMiddleware, adminMiddleware, (req, res) => {

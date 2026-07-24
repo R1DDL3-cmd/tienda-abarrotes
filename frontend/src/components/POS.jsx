@@ -737,7 +737,6 @@ export default function POS({ user, onLogout }) {
                     {user?.role === 'cashier' && (
                       <>
                         <button onClick={() => { window.location.hash = '#/purchases'; setShowMoreMenu(false) }}>Compras</button>
-                        <button onClick={() => { window.location.hash = '#/predictions'; setShowMoreMenu(false) }}>Proyector de Compra</button>
                         <button onClick={() => { setCashierExpenseForm({ description: '', amount: '', category: '', notes: '' }); setShowCashierExpenseModal(true); setShowMoreMenu(false) }}>Gasto</button>
                       </>
                     )}

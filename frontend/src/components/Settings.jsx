@@ -40,7 +40,7 @@ export default function Settings({ user }) {
     setThemeState(value)
   }
 
-  const [palette, setPaletteState] = useState({ primary: '', success: '', danger: '', warning: '' })
+  const [palette, setPaletteState] = useState({ primary: '', success: '', danger: '', warning: '', header_bg: '', header_text: '', accent: '' })
 
   useEffect(() => {
     if (tab === 'appearance') {
@@ -48,10 +48,29 @@ export default function Settings({ user }) {
         primary: p.palette_primary || '',
         success: p.palette_success || '',
         danger: p.palette_danger || '',
-        warning: p.palette_warning || ''
+        warning: p.palette_warning || '',
+        header_bg: p.palette_header_bg || '',
+        header_text: p.palette_header_text || '',
+        accent: p.palette_accent || ''
       })).catch(() => {})
     }
   }, [tab])
+
+  // Temas predefinidos: aplican varios colores de un jalón. El usuario puede
+  // partir de uno y luego afinar cada color a mano.
+  const PRESETS = [
+    { name: 'Azul (por defecto)', colors: { primary: '#2563eb', success: '#16a34a', danger: '#dc2626', warning: '#f59e0b', header_bg: '#1e293b', header_text: '#ffffff', accent: '#f0f7ff' } },
+    { name: 'Verde', colors: { primary: '#059669', success: '#16a34a', danger: '#dc2626', warning: '#f59e0b', header_bg: '#064e3b', header_text: '#ffffff', accent: '#ecfdf5' } },
+    { name: 'Rojo', colors: { primary: '#dc2626', success: '#16a34a', danger: '#b91c1c', warning: '#f59e0b', header_bg: '#7f1d1d', header_text: '#ffffff', accent: '#fef2f2' } },
+    { name: 'Morado', colors: { primary: '#7c3aed', success: '#16a34a', danger: '#dc2626', warning: '#f59e0b', header_bg: '#4c1d95', header_text: '#ffffff', accent: '#f5f3ff' } },
+    { name: 'Naranja', colors: { primary: '#ea580c', success: '#16a34a', danger: '#dc2626', warning: '#f59e0b', header_bg: '#7c2d12', header_text: '#ffffff', accent: '#fff7ed' } },
+    { name: 'Oscuro elegante', colors: { primary: '#3b82f6', success: '#22c55e', danger: '#ef4444', warning: '#f59e0b', header_bg: '#000000', header_text: '#f1f5f9', accent: '#eff6ff' } },
+  ]
+
+  const applyPreset = (preset) => {
+    setPaletteState(preset.colors)
+    applyPalette(preset.colors)
+  }
 
   const cssVar = (name) => (typeof window !== 'undefined' ? getComputedStyle(document.documentElement).getPropertyValue(name).trim() : '') || '#000000'
 
@@ -67,7 +86,10 @@ export default function Settings({ user }) {
         palette_primary: palette.primary,
         palette_success: palette.success,
         palette_danger: palette.danger,
-        palette_warning: palette.warning
+        palette_warning: palette.warning,
+        palette_header_bg: palette.header_bg,
+        palette_header_text: palette.header_text,
+        palette_accent: palette.accent
       })
       setSuccess('Colores de marca guardados')
       setTimeout(() => setSuccess(''), 3000)
@@ -75,11 +97,11 @@ export default function Settings({ user }) {
   }
 
   const handleResetPalette = async () => {
-    const empty = { primary: '', success: '', danger: '', warning: '' }
+    const empty = { primary: '', success: '', danger: '', warning: '', header_bg: '', header_text: '', accent: '' }
     setPaletteState(empty)
     clearPalette()
     try {
-      await settingsApi.updatePalette({ palette_primary: '', palette_success: '', palette_danger: '', palette_warning: '' })
+      await settingsApi.updatePalette({ palette_primary: '', palette_success: '', palette_danger: '', palette_warning: '', palette_header_bg: '', palette_header_text: '', palette_accent: '' })
       setSuccess('Colores restablecidos')
       setTimeout(() => setSuccess(''), 3000)
     } catch (e) { setError(e.message) }
@@ -396,24 +418,50 @@ export default function Settings({ user }) {
           </div>
 
           <h3 style={{marginTop:'1.5rem'}}>Colores de Marca</h3>
-          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
-            Se aplican en toda la app (botones, encabezados, alertas) para todos los usuarios.
+          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'0.75rem'}}>
+            Se aplican en toda la app (barra de navegación, botones, alertas) para todos los usuarios. Elige un tema listo o afina cada color.
           </p>
-          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.75rem'}}>
+
+          <label style={{fontWeight:600, fontSize:'0.9rem'}}>Temas listos</label>
+          <div style={{display:'flex', flexWrap:'wrap', gap:'0.5rem', margin:'0.4rem 0 1.2rem'}}>
+            {PRESETS.map(preset => (
+              <button key={preset.name} className="btn btn-sm btn-outline" onClick={() => applyPreset(preset)}
+                style={{display:'flex', alignItems:'center', gap:'0.4rem'}}>
+                <span style={{width:14, height:14, borderRadius:'50%', background:preset.colors.header_bg, border:'1px solid var(--border)'}}></span>
+                <span style={{width:14, height:14, borderRadius:'50%', background:preset.colors.primary, border:'1px solid var(--border)'}}></span>
+                {preset.name}
+              </button>
+            ))}
+          </div>
+
+          <label style={{fontWeight:600, fontSize:'0.9rem'}}>Barra de navegación (arriba)</label>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.75rem', margin:'0.4rem 0 1rem'}}>
             <div className="form-group">
-              <label>Primario</label>
+              <label>Fondo de la barra</label>
+              <input type="color" className="input" value={palette.header_bg || cssVar('--header-bg')} onChange={e => handlePaletteChange('header_bg', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Texto de la barra</label>
+              <input type="color" className="input" value={palette.header_text || cssVar('--header-text')} onChange={e => handlePaletteChange('header_text', e.target.value)} />
+            </div>
+          </div>
+
+          <label style={{fontWeight:600, fontSize:'0.9rem'}}>Colores de acción</label>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.75rem', marginTop:'0.4rem'}}>
+            <div className="form-group">
+              <label>Primario (botones)</label>
               <input type="color" className="input" value={palette.primary || cssVar('--primary')} onChange={e => handlePaletteChange('primary', e.target.value)} />
             </div>
             <div className="form-group">
-              <label>Éxito</label>
+              <label>Éxito (verde)</label>
               <input type="color" className="input" value={palette.success || cssVar('--success')} onChange={e => handlePaletteChange('success', e.target.value)} />
             </div>
             <div className="form-group">
-              <label>Peligro</label>
+              <label>Peligro (rojo)</label>
               <input type="color" className="input" value={palette.danger || cssVar('--danger')} onChange={e => handlePaletteChange('danger', e.target.value)} />
             </div>
             <div className="form-group">
-              <label>Advertencia</label>
+              <label>Advertencia (amarillo)</label>
               <input type="color" className="input" value={palette.warning || cssVar('--warning')} onChange={e => handlePaletteChange('warning', e.target.value)} />
             </div>
           </div>
