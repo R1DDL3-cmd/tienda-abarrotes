@@ -3,7 +3,7 @@ import { sales, products, customers, network, accounting, withdrawals, hardware,
 import { getTheme, toggleTheme } from '../theme'
 import { enqueueSale, getQueue, syncQueue, discardFailed, retryFailed } from '../offlineQueue'
 import { formatDateTime, formatDate, formatTime, formatLiveClock } from '../dateUtils'
-import { getShortcuts, matchesShortcut } from '../shortcuts'
+import { getShortcuts, matchesShortcut, keyLabel } from '../shortcuts'
 import { escapeHtml, buildStoreHeader, openTicketWindow } from '../ticketPrint'
 import { modalKeys } from '../modalKeys'
 import { confirmDialog } from '../confirmDialog'
@@ -740,7 +740,7 @@ export default function POS({ user, onLogout }) {
                         <button onClick={() => { setCashierExpenseForm({ description: '', amount: '', category: '', notes: '' }); setShowCashierExpenseModal(true); setShowMoreMenu(false) }}>Gasto</button>
                       </>
                     )}
-                    <button onClick={() => { setHistoryModal(true); setShowMoreMenu(false) }}>Historial ({getShortcuts().pos_history.key})</button>
+                    <button onClick={() => { setHistoryModal(true); setShowMoreMenu(false) }}>Historial ({keyLabel(getShortcuts().pos_history.key)})</button>
                     {user?.role === 'admin' && (
                       <button onClick={() => { window.location.hash = '#/settings'; setShowMoreMenu(false) }}>Configuración</button>
                     )}
@@ -779,7 +779,7 @@ export default function POS({ user, onLogout }) {
           </button>
         </div>
         <div className="shortcuts-hint" style={{fontSize:'0.75rem', color:'var(--text-muted)', marginTop:'0.25rem'}}>
-          {(() => { const s = getShortcuts(); return `${s.pos_search.key} Buscar producto · ${s.pos_charge.key} Cobrar · ${s.pos_customer.key} Cliente/Fiado · ${s.pos_history.key} Historial` })()}
+          {(() => { const s = getShortcuts(); return `${keyLabel(s.pos_search.key)} Buscar producto · ${keyLabel(s.pos_charge.key)} Cobrar · ${keyLabel(s.pos_customer.key)} Cliente/Fiado · ${keyLabel(s.pos_history.key)} Historial` })()}
         </div>
       </div>
 

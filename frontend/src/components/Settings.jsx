@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { auth, backup, settings as settingsApi } from '../api'
 import { formatDate, formatDateTime } from '../dateUtils'
 import { getTheme, setTheme, applyPalette, clearPalette } from '../theme'
-import { getShortcuts, setShortcutKey, resetShortcuts, eventToKeyString, DEFAULT_SHORTCUTS } from '../shortcuts'
+import { getShortcuts, setShortcutKey, resetShortcuts, eventToKeyString, keyLabel, DEFAULT_SHORTCUTS } from '../shortcuts'
 import { modalKeys } from '../modalKeys'
 import { confirmDialog } from '../confirmDialog'
 import { getManualOffsetHours, setManualOffsetHours } from '../dateUtils'
@@ -107,15 +107,16 @@ export default function Settings({ user }) {
     } catch (e) { setError(e.message) }
   }
 
-  // Captura la siguiente tecla presionada (F1-F12, o Ctrl+letra) para
-  // remapear un atajo. Se ignoran otras teclas para no guardar algo como
-  // "a" que chocaría con escritura normal en cualquier input.
+  // Captura la siguiente tecla presionada para remapear un atajo. Acepta
+  // CUALQUIER tecla (letras, números, Enter, Supr, Inicio, flechas, F1-F12,
+  // o combinaciones con Ctrl/Alt). Escape cancela la captura sin asignar nada.
   useEffect(() => {
     if (!capturingShortcut) return
     const onKeyDown = (e) => {
       e.preventDefault()
+      if (e.key === 'Escape') { setCapturingShortcut(null); return }
       const key = eventToKeyString(e)
-      if (!key) return
+      if (!key) return // tecla modificadora sola: seguir esperando
       setShortcutKey(capturingShortcut, key)
       setShortcutsState(getShortcuts())
       setCapturingShortcut(null)
@@ -504,7 +505,10 @@ export default function Settings({ user }) {
         <div className="card" style={{maxWidth:'550px', padding:'1.5rem'}}>
           <h3 style={{marginTop:0}}>Atajos de Teclado</h3>
           <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
-            Los de navegación funcionan en cualquier pantalla. Los del punto de venta solo aplican estando ahí. Haz clic en "Cambiar" y presiona la tecla que quieras usar (F1-F12, o Ctrl + una letra).
+            Los de navegación funcionan en cualquier pantalla. Los del punto de venta solo aplican estando ahí. Haz clic en "Cambiar" y presiona la tecla que quieras: puede ser cualquiera (una letra, un número, Enter, Supr, Inicio, F1-F12, o Ctrl/Alt + una tecla). Escape cancela.
+          </p>
+          <p style={{fontSize:'0.8rem', color:'var(--warning-dark)', marginBottom:'1rem'}}>
+            Recomendación: usa teclas F1-F12 o combinaciones con Ctrl para el punto de venta. Si asignas una letra o número suelto, podría activarse al escanear un código de barras.
           </p>
           <table className="table">
             <thead><tr><th>Acción</th><th>Tecla</th><th></th></tr></thead>
@@ -512,7 +516,7 @@ export default function Settings({ user }) {
               {Object.keys(DEFAULT_SHORTCUTS).map(id => (
                 <tr key={id}>
                   <td>{shortcuts[id].label}</td>
-                  <td><strong>{capturingShortcut === id ? 'Presiona una tecla...' : shortcuts[id].key}</strong></td>
+                  <td><strong>{capturingShortcut === id ? 'Presiona una tecla...' : keyLabel(shortcuts[id].key)}</strong></td>
                   <td>
                     <button className="btn btn-sm btn-outline" onClick={() => setCapturingShortcut(id)} disabled={capturingShortcut === id}>
                       Cambiar
