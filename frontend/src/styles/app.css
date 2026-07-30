@@ -559,3 +559,134 @@ code { background: var(--bg-hover); padding: 0.15rem 0.4rem; border-radius: 4px;
 @media (max-width: 768px) {
   .purchases-layout { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   CAPA DE TECLADO — barra de ayuda, paleta, estado y cambio
+   Ver frontend/src/keyboard/. Todo se genera del registro de
+   acciones; aquí solo va la presentación.
+   ============================================================ */
+
+/* --- Barra de ayuda contextual (fija abajo, estilo POS clásico) --- */
+.help-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 500;
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--header-bg); color: var(--header-text);
+  padding: 0.35rem 0.6rem; box-shadow: 0 -2px 8px rgba(0,0,0,0.18);
+  font-size: 0.82rem; min-height: 34px;
+}
+.help-bar-collapsed { min-height: 26px; padding: 0.15rem 0.6rem; }
+.help-bar-toggle {
+  background: transparent; border: none; color: var(--header-text);
+  cursor: pointer; opacity: 0.65; font-size: 0.75rem; padding: 0.15rem 0.35rem;
+}
+.help-bar-toggle:hover { opacity: 1; }
+.help-bar-keys { display: flex; flex-wrap: wrap; gap: 0.15rem 0.9rem; align-items: center; }
+.help-bar-hint { opacity: 0.55; font-size: 0.75rem; }
+.help-key { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+.help-key-name { opacity: 0.85; }
+.help-bar kbd, .palette kbd {
+  display: inline-block; min-width: 1.4em; text-align: center;
+  padding: 0.05rem 0.35rem; border-radius: 4px;
+  background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.28);
+  font-family: var(--font); font-size: 0.75rem; font-weight: 700;
+}
+/* Deja espacio para que la barra no tape el contenido */
+.pos-page, .admin-content { padding-bottom: 44px; }
+
+/* --- Paleta de comandos --- */
+.palette-overlay { align-items: flex-start; padding-top: 12vh; }
+.palette {
+  width: min(620px, 92vw); background: var(--bg-card); color: var(--text);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.palette-input {
+  border: none; border-bottom: 1px solid var(--border); border-radius: 0;
+  font-size: 1.15rem; padding: 0.9rem 1rem; background: var(--input-bg); color: var(--text);
+}
+.palette-input:focus { outline: none; box-shadow: none; }
+.palette-list { max-height: 46vh; overflow-y: auto; }
+.palette-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.6rem 1rem; cursor: pointer; border-left: 3px solid transparent;
+}
+.palette-item.active { background: var(--bg-accent); border-left-color: var(--primary); }
+.palette-item-main { display: flex; flex-direction: column; min-width: 0; }
+.palette-item-name { font-weight: 600; }
+.palette-item-desc { font-size: 0.8rem; color: var(--text-muted); }
+.palette-item-keys { display: flex; gap: 0.25rem; flex-shrink: 0; }
+.palette-item-keys kbd { background: var(--bg); border: 1px solid var(--border); color: var(--text-secondary); }
+.palette-nokey { font-size: 0.72rem; color: var(--text-muted); font-style: italic; }
+.palette-empty { padding: 1.2rem 1rem; color: var(--text-muted); text-align: center; }
+.palette-footer {
+  padding: 0.45rem 1rem; border-top: 1px solid var(--border);
+  font-size: 0.75rem; color: var(--text-muted); background: var(--bg);
+}
+.palette-footer kbd { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-secondary); }
+
+/* --- Estado siempre visible: el usuario nunca adivina en qué modo está --- */
+.state-badge {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.2rem 0.7rem; border-radius: 20px;
+  font-weight: 800; font-size: 0.8rem; letter-spacing: 0.06em;
+}
+.state-captura { background: var(--success); color: #fff; }
+.state-cobro   { background: var(--warning); color: #3b2600; }
+.state-cambio  { background: var(--primary); color: #fff; }
+
+/* --- Cambio a devolver: media pantalla, alto contraste --- */
+.change-hero {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.4rem; padding: 1.5rem 1rem; margin: 0.5rem 0 1rem;
+  background: var(--primary); color: #fff; border-radius: var(--radius-lg);
+}
+.change-hero-label { font-size: 1.1rem; opacity: 0.9; letter-spacing: 0.1em; font-weight: 700; }
+.change-hero-amount { font-size: clamp(3.5rem, 13vw, 8rem); font-weight: 900; line-height: 1; }
+.change-hero-hint { font-size: 0.9rem; opacity: 0.85; }
+
+/* --- Línea de comando --- */
+.command-line-wrap { position: relative; }
+/* El texto fantasma del autocompletado se dibuja detrás, alineado al input */
+.command-ghost {
+  position: absolute; inset: 0; pointer-events: none;
+  display: flex; align-items: center; padding: 0 0.9rem;
+  color: var(--text-muted); opacity: 0.55; white-space: pre;
+  font-size: inherit; font-family: var(--font);
+}
+.command-ghost .typed { visibility: hidden; }
+.scanning-badge {
+  position: absolute; right: 0.6rem; top: 50%; transform: translateY(-50%);
+  font-size: 0.7rem; color: var(--success); font-weight: 700;
+}
+
+/* --- Línea seleccionada del ticket: barra completa, no solo borde --- */
+.cart-table tr.line-active > td { background: var(--bg-accent) !important; }
+.cart-table tr.line-active > td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+/* Parpadeo breve al agregar: confirmación visual periférica */
+@keyframes line-flash { from { background: var(--success); } to { background: transparent; } }
+.cart-table tr.line-added > td { animation: line-flash 0.5s ease-out; }
+
+/* --- Ventana de ayuda completa (F1) --- */
+.help-sheet-group { margin-bottom: 1rem; }
+.help-sheet-group h4 { margin: 0 0 0.35rem; color: var(--primary); font-size: 0.95rem; }
+.help-sheet-row {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: 0.3rem 0; border-bottom: 1px solid var(--border-light);
+}
+.help-sheet-row .keys { display: flex; gap: 0.25rem; flex-shrink: 0; }
+.help-sheet-row kbd {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 0.05rem 0.4rem; border-radius: 4px; font-size: 0.78rem; font-weight: 700;
+}
+
+/* --- Toast: aviso que no bloquea ni roba el foco --- */
+.toast {
+  position: fixed; left: 50%; bottom: 52px; transform: translateX(-50%);
+  z-index: 600; padding: 0.6rem 1.1rem; border-radius: var(--radius);
+  background: var(--text); color: var(--bg-card); font-weight: 600;
+  box-shadow: var(--shadow-lg); cursor: pointer; max-width: 90vw;
+  animation: toast-in 0.15s ease-out;
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+.toast-success { background: var(--success); color: #fff; }
+.toast-error { background: var(--danger); color: #fff; }

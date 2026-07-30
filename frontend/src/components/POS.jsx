@@ -7,6 +7,12 @@ import { getShortcuts, matchesShortcut, keyLabel } from '../shortcuts'
 import { escapeHtml, buildStoreHeader, openTicketWindow } from '../ticketPrint'
 import { modalKeys } from '../modalKeys'
 import { confirmDialog } from '../confirmDialog'
+import { useKeyboardLayer, focusCommandLine } from '../keyboard/input.js'
+import { STATES, actionsFor } from '../keyboard/registry.js'
+import { parseCommand, resolveCommand, ghostSuggestion } from '../keyboard/parser.js'
+import { suspendSale, resumeSale, listSuspended, discardSuspended } from '../suspendedSales'
+import HelpBar from './HelpBar'
+import CommandPalette from './CommandPalette'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -73,6 +79,17 @@ export default function POS({ user, onLogout }) {
   const paymentRef = useRef(null)
   const securityRef = useRef(null)
   const [clock, setClock] = useState(new Date())
+  // --- Capa de teclado (ver frontend/src/keyboard/) ---
+  const [activeLine, setActiveLine] = useState(0)      // línea seleccionada del ticket
+  const [flashLine, setFlashLine] = useState(null)     // parpadeo al agregar
+  const [undoStack, setUndoStack] = useState([])       // deshacer en captura
+  const [showPalette, setShowPalette] = useState(false)
+  const [showHelpSheet, setShowHelpSheet] = useState(false)
+  const [showSuspendedList, setShowSuspendedList] = useState(false)
+  const [suspendedList, setSuspendedList] = useState([])
+  const [scanning, setScanning] = useState(false)
+  const [toast, setToast] = useState(null)             // aviso no bloqueante
+  const isCashier = user?.role === 'cashier'
 
   useEffect(() => { const id = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(id) }, [])
   useEffect(() => { if (error) { const t = setTimeout(() => setError(''), 7000); return () => clearTimeout(t) } }, [error])
@@ -200,50 +217,361 @@ export default function POS({ user, onLogout }) {
   const subtotal = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity) - (item.discount || 0), 0)
   const total = subtotal - totalDiscount
 
-  // Atajos de teclado para las acciones más frecuentes del día a día:
-  // buscar producto, cobrar, seleccionar cliente (fiado) e historial.
-  // Se ignoran mientras el usuario escribe en cualquier input que no sea el
-  // de código de barras, para no interferir con formularios ni con el
-  // escaneo normal (los lectores de código de barras no envían teclas F).
-  useEffect(() => {
-    const noModal = !showStartDayModal && !paymentModal && !customerModal && !historyModal && !showEndDayModal && !showWithdrawalModal && !showWithdrawalsList && !showLogoutConfirm && !showCashCountModal && !cancelModal && !newCustomerModal && !showSecurityModal && !individualChoice
-    const shortcuts = getShortcuts()
-    const onKeyDown = (e) => {
-      const tag = e.target.tagName
-      const isTypingElsewhere = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && e.target !== barcodeRef.current
-      if (isTypingElsewhere) return
-      if (matchesShortcut(e, shortcuts.pos_search) && noModal) { e.preventDefault(); setShowSearch(true) }
-      else if (matchesShortcut(e, shortcuts.pos_charge) && noModal) { e.preventDefault(); openPayment() }
-      else if (matchesShortcut(e, shortcuts.pos_customer) && noModal) { e.preventDefault(); setCustomerModal(true) }
-      else if (matchesShortcut(e, shortcuts.pos_history) && noModal) { e.preventDefault(); setHistoryModal(true) }
-      else if (e.key === 'Escape' && showSearch) { setShowSearch(false); setSearchQuery('') }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [showStartDayModal, paymentModal, customerModal, historyModal, showEndDayModal, showWithdrawalModal, showWithdrawalsList, showLogoutConfirm, showCashCountModal, cancelModal, newCustomerModal, showSecurityModal, individualChoice, showSearch, cart, total])
+  // ============================================================
+  // MÁQUINA DE ESTADOS + CAPA DE TECLADO
+  // El estado decide qué significa cada tecla (la misma F1 es "Ayuda" en
+  // captura y "Efectivo" en cobro) y qué muestra la barra de ayuda. Los
+  // atajos NO se escriben aquí: salen del registro (keyboard/registry.js);
+  // este componente solo aporta el comportamiento.
+  // ============================================================
+  const anyModalOpen = showStartDayModal || customerModal || historyModal || showEndDayModal ||
+    showWithdrawalModal || showWithdrawalsList || showLogoutConfirm || showCashCountModal ||
+    cancelModal || newCustomerModal || showSecurityModal || individualChoice ||
+    showPalette || showHelpSheet || showSuspendedList || showCashierExpenseModal || showQueueModal
 
-  const handleBarcode = useCallback(async (value) => {
-    if (!value) return
-    let qty = 1
-    let code = value
-    const match = value.match(/^(\d+)[*xX](.+)/)
-    if (match) {
-      qty = parseInt(match[1])
-      code = match[2]
-    }
-    try {
-      const product = await products.getByBarcode(code)
-      tryAddToCart(product, qty)
-      setBarcode('')
-      setError('')
-    } catch (e) {
-      setSecurityBarcode(code)
-      setSecurityQty(qty)
-      setSecurityPin('')
-      setShowSecurityModal(true)
-      setBarcode('')
-    }
+  const posState = saleDone ? STATES.CAMBIO
+    : paymentModal ? STATES.COBRO
+    : showSearch ? STATES.BUSQUEDA
+    : anyModalOpen ? STATES.MODAL
+    : STATES.CAPTURA
+
+  // Aviso no bloqueante: no roba el foco y se va solo (principio 7).
+  const notify = useCallback((text, kind = 'info') => {
+    setToast({ text, kind, id: Date.now() })
+    setTimeout(() => setToast(t => (t && Date.now() - t.id >= 2400 ? null : t)), 2500)
   }, [])
+
+  // Instantánea del ticket para poder deshacer. Solo en captura: el dinero ya
+  // registrado no se deshace desde aquí (se cancela con su propio flujo).
+  const pushUndo = useCallback(() => {
+    setUndoStack(prev => [...prev.slice(-19), { cart, totalDiscount, selectedCustomer }])
+  }, [cart, totalDiscount, selectedCustomer])
+
+  const handleUndo = useCallback(() => {
+    setUndoStack(prev => {
+      if (prev.length === 0) { notify('Nada que deshacer'); return prev }
+      const snapshot = prev[prev.length - 1]
+      setCart(snapshot.cart)
+      setTotalDiscount(snapshot.totalDiscount)
+      setSelectedCustomer(snapshot.selectedCustomer)
+      notify('Deshecho')
+      return prev.slice(0, -1)
+    })
+  }, [notify])
+
+  const handleSuspend = useCallback(() => {
+    if (cart.length === 0) { notify('No hay nada que suspender'); return }
+    suspendSale({ cart, totalDiscount, customer: selectedCustomer, userName: user?.name })
+    setCart([]); setTotalDiscount(0); setSelectedCustomer(null); setUndoStack([])
+    notify('Venta suspendida — F7 para retomarla', 'success')
+  }, [cart, totalDiscount, selectedCustomer, user, notify])
+
+  const openSuspendedList = useCallback(() => {
+    const list = listSuspended()
+    if (list.length === 0) { notify('No hay ventas suspendidas'); return }
+    setSuspendedList(list)
+    setShowSuspendedList(true)
+  }, [notify])
+
+  const doResumeSale = useCallback((id) => {
+    const found = resumeSale(id)
+    if (!found) return
+    if (cart.length > 0) {
+      // No se pisa el ticket en curso: se suspende antes de traer el otro.
+      suspendSale({ cart, totalDiscount, customer: selectedCustomer, userName: user?.name })
+    }
+    setCart(found.cart || [])
+    setTotalDiscount(found.totalDiscount || 0)
+    setSelectedCustomer(found.customer || null)
+    setShowSuspendedList(false)
+    setUndoStack([])
+    notify('Venta retomada', 'success')
+  }, [cart, totalDiscount, selectedCustomer, user, notify])
+
+  // Mueve la selección de línea del ticket y la mantiene dentro de rango.
+  const moveLine = useCallback((delta) => {
+    setActiveLine(i => {
+      if (cart.length === 0) return 0
+      return Math.max(0, Math.min(cart.length - 1, i + delta))
+    })
+  }, [cart.length])
+
+  const changeQty = useCallback((delta) => {
+    if (cart.length === 0) return
+    const item = cart[Math.min(activeLine, cart.length - 1)]
+    if (!item) return
+    const isWeight = item.unit_type === 'kg' || item.unit_type === 'l'
+    const step = isWeight ? 0.1 : 1
+    const next = Math.round((item.quantity + delta * step) * 100) / 100
+    if (next <= 0) { notify('Usa Supr para quitar la línea'); return }
+    pushUndo()
+    updateCartItem(item.product_id, 'quantity', next, item.is_individual)
+  }, [cart, activeLine, pushUndo, notify])
+
+  const removeActiveLine = useCallback(() => {
+    if (cart.length === 0) { notify('El ticket está vacío'); return }
+    const item = cart[Math.min(activeLine, cart.length - 1)]
+    if (!item) return
+    pushUndo()
+    removeFromCart(item.product_id, item.is_individual)
+    notify(`Quitado: ${item.product_name} — Ctrl+Z deshace`)
+  }, [cart, activeLine, pushUndo, notify])
+
+  const applyLineDiscount = useCallback((pct) => {
+    if (isCashier) { notify('Solo el dueño aplica descuentos', 'error'); return }
+    if (cart.length === 0) { notify('El ticket está vacío'); return }
+    const item = cart[Math.min(activeLine, cart.length - 1)]
+    if (!item) return
+    const monto = Math.round(item.unit_price * item.quantity * (pct / 100) * 100) / 100
+    pushUndo()
+    updateCartItem(item.product_id, 'discount', monto, item.is_individual)
+    notify(`Descuento ${pct}% en ${item.product_name}`, 'success')
+  }, [cart, activeLine, isCashier, pushUndo, notify])
+
+  const setLinePrice = useCallback((price) => {
+    if (isCashier) { notify('Solo el dueño cambia precios', 'error'); return }
+    if (cart.length === 0) { notify('El ticket está vacío'); return }
+    const item = cart[Math.min(activeLine, cart.length - 1)]
+    if (!item) return
+    pushUndo()
+    updateCartItem(item.product_id, 'unit_price', price, item.is_individual)
+    notify(`Precio manual: ${formatMoney(price)}`, 'success')
+  }, [cart, activeLine, isCashier, pushUndo, notify])
+
+  const clearTicket = useCallback(() => {
+    if (cart.length === 0) return
+    pushUndo()
+    setCart([]); setTotalDiscount(0); setSelectedCustomer(null)
+    notify('Ticket vaciado — Ctrl+Z deshace')
+  }, [cart.length, pushUndo, notify])
+
+  // Suma una denominación al pago en efectivo (teclas F5-F9 en cobro).
+  const addDenomination = useCallback((amount) => {
+    setPayments(prev => {
+      const idx = prev.findIndex(p => p.method === 'cash')
+      if (idx === -1) return [{ method: 'cash', amount }, ...prev]
+      const copy = [...prev]
+      copy[idx] = { ...copy[idx], amount: (parseFloat(copy[idx].amount) || 0) + amount }
+      return copy
+    })
+  }, [])
+
+  const setPaymentMethod = useCallback((method) => {
+    setPayments(prev => {
+      const copy = [...prev]
+      copy[0] = { ...copy[0], method }
+      return copy
+    })
+  }, [])
+
+  // Handlers: el registro dice QUÉ tecla, esto dice QUÉ hace.
+  const handlers = {
+    pos_help: () => setShowHelpSheet(true),
+    pos_search: () => setShowSearch(true),
+    pos_customer: () => setCustomerModal(true),
+    pos_charge: () => openPayment(),
+    pos_discount: () => applyLineDiscount(10),
+    pos_suspend: () => handleSuspend(),
+    pos_resume: () => openSuspendedList(),
+    pos_history: () => setHistoryModal(true),
+    pos_remove_line: () => removeActiveLine(),
+    pos_palette: () => setShowPalette(true),
+    pos_undo: () => handleUndo(),
+    pos_qty_up: () => changeQty(1),
+    pos_qty_down: () => changeQty(-1),
+    pos_line_prev: () => moveLine(-1),
+    pos_line_next: () => moveLine(1),
+    pos_clear: () => clearTicket(),
+    pos_withdrawal: () => { setWithdrawalAmount(''); setWithdrawalReason(''); setShowWithdrawalModal(true) },
+    pos_expense: () => { setCashierExpenseForm({ description: '', amount: '', category: '', notes: '' }); setShowCashierExpenseModal(true) },
+    pos_close_day: () => handleEndDayClick(),
+    // Cobro
+    cobro_cash: () => setPaymentMethod('cash'),
+    cobro_card: () => setPaymentMethod('card'),
+    cobro_transfer: () => setPaymentMethod('transfer'),
+    cobro_mixed: () => addPaymentMethod(),
+    cobro_d20: () => addDenomination(20),
+    cobro_d50: () => addDenomination(50),
+    cobro_d100: () => addDenomination(100),
+    cobro_d200: () => addDenomination(200),
+    cobro_d500: () => addDenomination(500),
+  }
+
+  // Los comandos "/algo" de la línea de comando ejecutan exactamente los
+  // mismos handlers que las teclas: una sola definición de comportamiento.
+  const handlersRef = useRef(handlers)
+  handlersRef.current = handlers
+
+  useKeyboardLayer({
+    state: posState,
+    role: user?.role,
+    handlers,
+    commandLineRef: barcodeRef,
+    isCommandLineEmpty: () => !barcode,
+    enabled: !!currentSession || posState !== STATES.CAPTURA,
+    onScanStateChange: setScanning,
+  })
+
+  // El foco SIEMPRE regresa a la línea de comando al volver a captura,
+  // incluso después de una operación fallida (criterio de aceptación 3).
+  useEffect(() => {
+    if (posState === STATES.CAPTURA) focusCommandLine(barcodeRef, { delay: 30 })
+  }, [posState])
+
+  // "Enter avanza, Esc retrocede" es una regla universal de la app, no un
+  // atajo configurable: por eso vive aquí y no en el registro de acciones.
+  useEffect(() => {
+    const onKey = (e) => {
+      // CAMBIO: Enter arranca la siguiente venta sin tocar el mouse; P imprime.
+      if (posState === STATES.CAMBIO) {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          e.preventDefault()
+          setSaleDone(null)
+          setOfflineSaleQueued(false)
+        } else if (e.key.toLowerCase() === 'p' && !offlineSaleQueued) {
+          e.preventDefault()
+          handlePrintTicket()
+        }
+        return
+      }
+      // Esc retrocede SIEMPRE, sin importar dónde esté el foco. Antes cada
+      // ventana traía su propio manejador que solo servía si el foco estaba
+      // dentro — justo el anti-patrón de "atajos que dependen de la ventana
+      // activa". Se cierra lo más superficial primero.
+      if (e.key !== 'Escape') return
+      if (showPalette) { e.preventDefault(); setShowPalette(false) }
+      else if (showHelpSheet) { e.preventDefault(); setShowHelpSheet(false) }
+      else if (showSuspendedList) { e.preventDefault(); setShowSuspendedList(false) }
+      else if (showSearch) { e.preventDefault(); setShowSearch(false); setSearchQuery(''); setSearchResults([]) }
+      else if (paymentModal) { e.preventDefault(); setPaymentModal(false) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [posState, offlineSaleQueued, showPalette, showHelpSheet, showSuspendedList, showSearch, paymentModal])
+
+  // LÍNEA DE COMANDO — todo lo que se teclea pasa por aquí. El parser
+  // (keyboard/parser.js) decide la intención; esto la ejecuta.
+  const handleBarcode = useCallback(async (value) => {
+    const parsed = parseCommand(value)
+
+    switch (parsed.type) {
+      case 'empty':
+        return
+
+      case 'invalid':
+        notify(parsed.reason, 'error')
+        setBarcode('')
+        return
+
+      case 'search':
+        setShowSearch(true)
+        setSearchQuery(parsed.query)
+        handleSearch(parsed.query)
+        setBarcode('')
+        return
+
+      case 'customer':
+        setCustomerModal(true)
+        setCustomerSearch(parsed.query)
+        if (parsed.query) {
+          try { const res = await customers.list(parsed.query); setCustomerList(res.customers) } catch (e) {}
+        }
+        setBarcode('')
+        return
+
+      case 'command': {
+        const actionId = resolveCommand(parsed.command)
+        setBarcode('')
+        if (!actionId) { notify(`No conozco el comando "/${parsed.command}"`, 'error'); return }
+        const run = handlersRef.current[actionId]
+        if (run) run()
+        else notify('Esa acción no está disponible aquí', 'error')
+        return
+      }
+
+      case 'set_qty': {
+        if (cart.length === 0) { notify('El ticket está vacío'); setBarcode(''); return }
+        const item = cart[Math.min(activeLine, cart.length - 1)]
+        pushUndo()
+        updateCartItem(item.product_id, 'quantity', parsed.qty, item.is_individual)
+        notify(`${item.product_name} → ${parsed.qty}`)
+        setBarcode('')
+        return
+      }
+
+      case 'discount_pct':
+        applyLineDiscount(parsed.value)
+        setBarcode('')
+        return
+
+      case 'set_price':
+        setLinePrice(parsed.value)
+        setBarcode('')
+        return
+
+      case 'remove': {
+        const item = cart.find(i => i.barcode === parsed.code || String(i.product_id) === parsed.code)
+        setBarcode('')
+        if (!item) { notify('Ese producto no está en el ticket', 'error'); return }
+        pushUndo()
+        removeFromCart(item.product_id, item.is_individual)
+        notify(`Quitado: ${item.product_name} — Ctrl+Z deshace`)
+        return
+      }
+
+      case 'product': {
+        let product
+        try {
+          product = await products.getByBarcode(parsed.code)
+        } catch (e) {
+          // No existe como código: se cae a búsqueda por nombre SIN borrar lo
+          // escrito (regla 1 del parser). Solo si parece un código de barras
+          // de verdad se pide el código de seguridad.
+          const pareceCodigo = /^\d{6,}$/.test(parsed.code)
+          if (pareceCodigo) {
+            setSecurityBarcode(parsed.code)
+            setSecurityQty(parsed.qty || 1)
+            setSecurityPin('')
+            setShowSecurityModal(true)
+            setBarcode('')
+          } else {
+            setShowSearch(true)
+            setSearchQuery(parsed.code)
+            handleSearch(parsed.code)
+          }
+          return
+        }
+
+        // "$50 de jamón": la cantidad sale del importe y del precio del producto.
+        let qty = parsed.qty
+        if (parsed.amount) {
+          const precio = parseFloat(product.sale_price) || 0
+          if (precio <= 0) { notify('Ese producto no tiene precio', 'error'); setBarcode(''); return }
+          qty = Math.round((parsed.amount / precio) * 1000) / 1000
+        }
+
+        pushUndo()
+        if (parsed.individual) {
+          if (!product.sellable_individually) {
+            notify(`${product.name} no se vende por pieza suelta`, 'error')
+            setBarcode('')
+            return
+          }
+          addToCart(product, qty, true)
+        } else {
+          tryAddToCart(product, qty)
+        }
+        setFlashLine(product.id)
+        setTimeout(() => setFlashLine(null), 600)
+        setBarcode('')
+        setError('')
+        return
+      }
+
+      default:
+        setBarcode('')
+    }
+  }, [cart, activeLine, pushUndo, notify, applyLineDiscount, setLinePrice])
 
   const handleSecurityConfirm = () => {
     const storedPin = localStorage.getItem('securityPin') || '1234'
@@ -413,7 +741,7 @@ export default function POS({ user, onLogout }) {
       setSelectedCustomer(null)
       setPaymentModal(false)
       setOfflineSaleQueued(true)
-      setSaleDone({ sale: { total }, items: cart })
+      setSaleDone({ sale: { total }, items: cart, change })
     }
 
     // No se usa navigator.onLine como atajo: solo refleja si el sistema
@@ -424,7 +752,7 @@ export default function POS({ user, onLogout }) {
     // siempre, y solo se encola si el intento en sí falla por conexión.
     try {
       const res = await sales.create(salePayload)
-      setSaleDone({ sale: res.sale, items: res.items })
+      setSaleDone({ sale: res.sale, items: res.items, change })
       setOfflineSaleQueued(false)
       setCart([])
       setTotalDiscount(0)
@@ -683,6 +1011,10 @@ export default function POS({ user, onLogout }) {
       <header className="pos-header">
         <div className="pos-header-left">
           <h1>Punto de Venta</h1>
+          {/* El estado SIEMPRE visible: el usuario nunca adivina en qué modo está */}
+          <span className={`state-badge state-${posState}`}>
+            {posState === STATES.COBRO ? 'COBRO' : posState === STATES.CAMBIO ? 'CAMBIO' : 'CAPTURA'}
+          </span>
           <span className="header-user">{user?.name}</span>
           <span className="header-today">{formatLiveClock(clock, { weekday: 'short', day: 'numeric', month: 'short' })} {formatLiveClock(clock, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           {registerData && (
@@ -763,28 +1095,47 @@ export default function POS({ user, onLogout }) {
       {success && <div className="alert alert-success" onClick={() => setSuccess('')}>{success}</div>}
 
       <div className="barcode-input">
-        <div className="input-group">
+        <div className="input-group command-line-wrap">
           <input
             ref={barcodeRef}
             type="text"
             className="input-lg"
-            placeholder="Escanear código de barras..."
+            placeholder="Escanea, o escribe: código · 3*código · ?nombre · /comando"
             value={barcode}
             onChange={handleBarcodeChange}
             autoFocus
-            onKeyDown={(e) => { if (e.key === 'Enter') { processedRef.current = true; const val = e.currentTarget.value.replace(/[\n\r]/g, '').trim(); if (val) { handleBarcode(val) }; setBarcode('') }}}
+            onKeyDown={(e) => {
+              // Tab acepta la sugerencia fantasma del autocompletado
+              if (e.key === 'Tab') {
+                const ghost = ghostSuggestion(barcode)
+                if (ghost) { e.preventDefault(); setBarcode(ghost); return }
+              }
+              if (e.key === 'Enter') { processedRef.current = true; const val = e.currentTarget.value.replace(/[\n\r]/g, '').trim(); if (val) { handleBarcode(val) }; setBarcode('') }
+            }}
           />
+          {/* Sugerencia en gris detrás del texto ya escrito */}
+          {ghostSuggestion(barcode) && (
+            <div className="command-ghost"><span className="typed">{barcode}</span>{ghostSuggestion(barcode).slice(barcode.length)}</div>
+          )}
+          {scanning && <span className="scanning-badge">escaneando…</span>}
           <button className="btn btn-secondary" onClick={() => { setShowSearch(!showSearch); setSearchQuery('') }}>
             Buscar
           </button>
-        </div>
-        <div className="shortcuts-hint" style={{fontSize:'0.75rem', color:'var(--text-muted)', marginTop:'0.25rem'}}>
-          {(() => { const s = getShortcuts(); return `${keyLabel(s.pos_search.key)} Buscar producto · ${keyLabel(s.pos_charge.key)} Cobrar · ${keyLabel(s.pos_customer.key)} Cliente/Fiado · ${keyLabel(s.pos_history.key)} Historial` })()}
         </div>
       </div>
 
       {saleDone ? (
         <div className="sale-done">
+          {/* Estado CAMBIO: la cifra domina la pantalla, alto contraste, para
+              leerla de reojo mientras se cuenta el dinero. Enter vuelve a
+              capturar sin tocar el mouse. */}
+          {saleDone.change > 0 && (
+            <div className="change-hero">
+              <div className="change-hero-label">CAMBIO</div>
+              <div className="change-hero-amount">{formatMoney(saleDone.change)}</div>
+              <div className="change-hero-hint">Enter para la siguiente venta</div>
+            </div>
+          )}
           <div className="sale-done-icon">{offlineSaleQueued ? '⏳' : '✓'}</div>
           <h2>{offlineSaleQueued ? 'Venta Guardada (Sin Conexión)' : 'Venta Completada'}</h2>
           {offlineSaleQueued ? (
@@ -793,9 +1144,9 @@ export default function POS({ user, onLogout }) {
             <p>Ticket #{saleDone.sale.id} - Total: {formatMoney(saleDone.sale.total)}</p>
           )}
           <div className="sale-done-actions">
-            {!offlineSaleQueued && <button className="btn btn-primary" onClick={handlePrintTicket}>Imprimir Ticket</button>}
+            {!offlineSaleQueued && <button className="btn btn-primary" onClick={handlePrintTicket}>Imprimir Ticket ({keyLabel('P')})</button>}
             <button className="btn btn-secondary" onClick={() => { setSaleDone(null); setOfflineSaleQueued(false) }}>
-              Nueva Venta
+              Nueva Venta (Enter)
             </button>
           </div>
         </div>
@@ -852,14 +1203,18 @@ export default function POS({ user, onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {cart.map(item => {
+                      {cart.map((item, idx) => {
                         const isWeight = item.unit_type === 'kg' || item.unit_type === 'l'
                         const unitLabel = item.unit_type === 'kg' ? 'kg' : item.unit_type === 'l' ? 'L' : ''
                         const qtyStep = isWeight ? 0.1 : 1
                         const qtyMin = isWeight ? 0.1 : 1
                         const isCashier = user?.role === 'cashier'
+                        const rowClass = [
+                          idx === Math.min(activeLine, cart.length - 1) ? 'line-active' : '',
+                          flashLine === item.product_id ? 'line-added' : '',
+                        ].filter(Boolean).join(' ')
                         return (
-                        <tr key={`${item.product_id}_${item.is_individual ? 'ind' : 'pkg'}`}>
+                        <tr key={`${item.product_id}_${item.is_individual ? 'ind' : 'pkg'}`} className={rowClass} onClick={() => setActiveLine(idx)}>
                           <td>{item.product_name}{item.is_individual && <span className="text-muted" style={{fontSize:'0.75rem'}}> (pieza)</span>}</td>
                           <td className="qty-cell">
                             <input type="number" className="qty-input" min={qtyMin} step={qtyStep} value={item.quantity} onChange={(e) => updateCartItem(item.product_id, 'quantity', parseFloat(e.target.value) || 0, item.is_individual)} />
@@ -1352,6 +1707,117 @@ export default function POS({ user, onLogout }) {
           </div>
         </div>
       )}
+
+      {/* ---------- Paleta de comandos (F10 / Ctrl+K) ---------- */}
+      {showPalette && (
+        <CommandPalette
+          state={STATES.CAPTURA}
+          role={user?.role}
+          onClose={() => setShowPalette(false)}
+          onRun={(action) => {
+            setShowPalette(false)
+            const run = handlersRef.current[action.id]
+            if (run) run()
+            else if (action.hash) window.location.hash = action.hash
+            else notify('Esa acción no está disponible aquí', 'error')
+          }}
+        />
+      )}
+
+      {/* ---------- Ayuda completa (F1) ---------- */}
+      {showHelpSheet && (
+        <div className="modal-overlay" onClick={() => setShowHelpSheet(false)} onKeyDown={modalKeys(() => setShowHelpSheet(false), () => setShowHelpSheet(false))}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Teclas disponibles</h3>
+              <button className="btn btn-sm btn-outline" onClick={() => setShowHelpSheet(false)}>Cerrar (Esc)</button>
+            </div>
+            <div className="modal-body">
+              {Object.entries(
+                actionsFor({ state: STATES.CAPTURA, role: user?.role })
+                  .filter(a => a.keys.length > 0)
+                  .reduce((acc, a) => { (acc[a.group || 'Otros'] ||= []).push(a); return acc }, {})
+              ).map(([grupo, acciones]) => (
+                <div key={grupo} className="help-sheet-group">
+                  <h4>{grupo}</h4>
+                  {acciones.map(a => (
+                    <div key={a.id} className="help-sheet-row">
+                      <span>{a.nombre} <span className="text-muted" style={{fontSize:'0.8rem'}}>— {a.descripcion}</span></span>
+                      <span className="keys">{a.keys.map(k => <kbd key={k}>{keyLabel(k)}</kbd>)}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <div className="help-sheet-group">
+                <h4>Línea de comando</h4>
+                {[
+                  ['código', 'Agrega el producto'],
+                  ['3*código', 'Agrega 3 piezas'],
+                  ['$50*código', 'Vende $50 de ese producto (granel)'],
+                  ['3i*código', 'Vende 3 piezas sueltas (cigarros)'],
+                  ['*5', 'Cambia a 5 la cantidad de la línea actual'],
+                  ['?nombre', 'Busca por nombre'],
+                  ['#cliente', 'Asigna cliente'],
+                  ['%10', 'Descuento del 10% en la línea actual'],
+                  ['=15.50', 'Precio manual en la línea actual'],
+                  ['-código', 'Quita esa línea del ticket'],
+                  ['/retiro  /gasto  /corte', 'Comandos del sistema'],
+                ].map(([sintaxis, desc]) => (
+                  <div key={sintaxis} className="help-sheet-row">
+                    <span>{desc}</span>
+                    <span className="keys"><kbd>{sintaxis}</kbd></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Ventas suspendidas (F7) ---------- */}
+      {showSuspendedList && (
+        <div className="modal-overlay" onClick={() => setShowSuspendedList(false)} onKeyDown={modalKeys(() => setShowSuspendedList(false), () => { if (suspendedList[0]) doResumeSale(suspendedList[0].id) })}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Ventas suspendidas ({suspendedList.length})</h3>
+              <button className="btn btn-sm btn-outline" onClick={() => setShowSuspendedList(false)}>Cerrar (Esc)</button>
+            </div>
+            <div className="modal-body">
+              <p className="text-muted" style={{fontSize:'0.85rem'}}>Enter retoma la primera. También puedes elegir cualquiera de la lista.</p>
+              <table className="table">
+                <thead><tr><th>Hora</th><th>Cliente</th><th>Productos</th><th>Total</th><th></th></tr></thead>
+                <tbody>
+                  {suspendedList.map((s, i) => (
+                    <tr key={s.id} className={i === 0 ? 'line-active' : ''}>
+                      <td>{formatDateTime(s.createdAt, { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td>{s.customer?.name || '-'}</td>
+                      <td>{s.itemCount} prod.</td>
+                      <td>{formatMoney(s.total)}</td>
+                      <td className="actions-cell">
+                        <button className="btn btn-sm btn-primary" onClick={() => doResumeSale(s.id)}>Retomar</button>
+                        <button className="btn btn-sm btn-danger" onClick={async () => {
+                          if (await confirmDialog('¿Descartar esta venta suspendida?')) {
+                            discardSuspended(s.id)
+                            setSuspendedList(listSuspended())
+                          }
+                        }}>X</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Aviso no bloqueante: no roba el foco y se va solo ---------- */}
+      {toast && (
+        <div className={`toast toast-${toast.kind}`} onClick={() => setToast(null)}>{toast.text}</div>
+      )}
+
+      {/* ---------- Barra de ayuda contextual (se genera del registro) ---------- */}
+      <HelpBar state={posState} role={user?.role} />
     </div>
   )
 }
