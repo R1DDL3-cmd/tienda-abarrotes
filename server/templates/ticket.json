@@ -1,0 +1,100 @@
+{
+  "_doc": "Plantilla del ticket. Se puede editar SIN recompilar la app. Ver docs/Formato de Ticket.md. Los anchos de cada rejilla deben sumar exactamente el número de columnas; el arranque falla si no cuadran.",
+
+  "ancho_por_defecto": 32,
+
+  "rejillas": {
+    "32": {
+      "_doc": "58 mm. No cabe una línea por artículo: se usan dos renglones.",
+      "modo": "dos_lineas",
+      "campos": {
+        "cant": 4,
+        "x": 3,
+        "precio": 8,
+        "total": 17
+      }
+    },
+    "48": {
+      "_doc": "80 mm con Font A (12x24).",
+      "modo": "una_linea",
+      "campos": {
+        "cant": 4,
+        "sp1": 1,
+        "sku": 4,
+        "sp2": 1,
+        "desc": 13,
+        "regular": 8,
+        "promo": 8,
+        "total": 9
+      },
+      "encabezado_promo": "PROMO"
+    },
+    "64": {
+      "_doc": "80 mm con Font B condensada. Más espacio para la descripción.",
+      "modo": "una_linea",
+      "font": "B",
+      "campos": {
+        "cant": 4,
+        "sp1": 1,
+        "sku": 6,
+        "sp2": 1,
+        "desc": 26,
+        "regular": 8,
+        "promo": 9,
+        "total": 9
+      },
+      "encabezado_promo": "PROMOCION"
+    }
+  },
+
+  "bloques": {
+    "logo": true,
+    "sucursal": false,
+    "fiscal": false,
+    "identificacion": true,
+    "impuestos": false,
+    "autorizacion": true,
+    "monedero": false,
+    "facturacion": false
+  },
+
+  "folio": {
+    "prefijo": "A-",
+    "digitos": 9
+  },
+
+  "impuestos": {
+    "_doc": "Los precios de la tienda ya incluyen impuestos. Si se activa el bloque, se desglosa el IVA CONTENIDO en el total, no se suma encima.",
+    "iva_incluido": true,
+    "tasa": 16
+  },
+
+  "leyendas": {
+    "cierre": "GRACIAS POR SU COMPRA",
+    "autorizacion": "AUTORIZADO CON FIRMA ELECTRONICA",
+    "copia": "*** COPIA ***",
+    "sin_conexion": "TICKET PENDIENTE DE SINCRONIZAR"
+  },
+
+  "monedero": [
+    "OBTUVISTE EN MONEDERO",
+    "ABONA ESTE TICKET A TU MONEDERO",
+    "VALIDO SOLO EN ESTA SUCURSAL",
+    "EXPIRA 7 DIAS DESPUES DE LA COMPRA"
+  ],
+
+  "marco": {
+    "_doc": "ascii = + - | (funciona en cualquier impresora). cp850 = caracteres de caja, más bonitos pero no todas los traen.",
+    "estilo": "ascii"
+  },
+
+  "escpos": {
+    "codepage": 2,
+    "_doc_codepage": "2 = CP850 (Latino I). 19 = CP858. 16 = WPC1252. Si los acentos salen como basura, cambia este número o activa translit.",
+    "translit": false,
+    "_doc_translit": "true convierte a->a, n->n antes de imprimir. Úsalo si ninguna página de códigos funciona en tu impresora.",
+    "avance_lineas": 4,
+    "corte": "parcial",
+    "abrir_cajon_con_efectivo": true
+  }
+}

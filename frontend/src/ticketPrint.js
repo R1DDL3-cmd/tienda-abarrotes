@@ -58,6 +58,43 @@ export function buildStoreHeader(storeInfo) {
 // resync de foco sigue disparándose igual cuando la ventana se cierra
 // (con el botón o con la X), solo que ahora sucede cuando el usuario
 // realmente termina, no antes.
+// RESPALDO de impresión: manda a la impresora el MISMO texto monoespaciado
+// que se ve en la vista previa (el que arma el servidor con el renderizador
+// de tickets). Se usa cuando no hay impresora ESC/POS configurada o cuando
+// falla el envío directo, para que la tienda nunca se quede sin ticket.
+//
+// El ancho de la fuente se ajusta al número de columnas para que la rejilla
+// caiga igual que en papel térmico.
+export function imprimirTextoHtml(texto, titulo = 'Ticket') {
+  const columnas = Math.max(...String(texto).split('\n').map(l => l.length), 32)
+  // 58 mm de papel ~ 48 mm imprimibles. Se reparte ese ancho entre las
+  // columnas para que el monoespaciado quepa exacto.
+  const mmUtiles = columnas <= 32 ? 48 : columnas <= 48 ? 72 : 72
+  const chMm = mmUtiles / columnas
+  const win = window.open('', '_blank', 'width=420,height=640')
+  if (!win) return null
+  win.document.write(`
+    <html><head><title>${escapeHtml(titulo)}</title><style>
+      @page { margin: 2mm; }
+      body { margin: 0; padding: 4px; background: #fff; }
+      pre { font-family: 'Courier New', monospace; font-size: ${(chMm / 0.6).toFixed(2)}mm;
+            line-height: 1.25; margin: 0; white-space: pre; }
+      .acciones { display: flex; gap: 8px; margin-bottom: 10px; }
+      .acciones button { flex: 1; font-family: inherit; font-size: 12px; padding: 8px;
+                         border: 1px solid #000; background: #fff; cursor: pointer; }
+      @media print { .acciones { display: none; } }
+    </style></head><body>
+    <div class="acciones">
+      <button onclick="window.print()">Imprimir</button>
+      <button onclick="window.close()">Cerrar</button>
+    </div>
+    <pre>${escapeHtml(texto)}</pre>
+    </body></html>
+  `)
+  win.document.close()
+  return win
+}
+
 export function openTicketWindow({ title, bodyHtml }) {
   const win = window.open('', '_blank', 'width=380,height=600')
   if (!win) return null

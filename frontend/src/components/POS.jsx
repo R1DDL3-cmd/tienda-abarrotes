@@ -4,7 +4,7 @@ import { getTheme, toggleTheme } from '../theme'
 import { enqueueSale, getQueue, syncQueue, discardFailed, retryFailed } from '../offlineQueue'
 import { formatDateTime, formatDate, formatTime, formatLiveClock } from '../dateUtils'
 import { getShortcuts, matchesShortcut, keyLabel } from '../shortcuts'
-import { escapeHtml, buildStoreHeader, openTicketWindow } from '../ticketPrint'
+import { escapeHtml, buildStoreHeader, openTicketWindow, imprimirTextoHtml } from '../ticketPrint'
 import { modalKeys } from '../modalKeys'
 import { confirmDialog } from '../confirmDialog'
 import { useKeyboardLayer, focusCommandLine } from '../keyboard/input.js'
@@ -89,6 +89,7 @@ export default function POS({ user, onLogout }) {
   const [suspendedList, setSuspendedList] = useState([])
   const [scanning, setScanning] = useState(false)
   const [toast, setToast] = useState(null)             // aviso no bloqueante
+  const [previewTicket, setPreviewTicket] = useState(null) // vista previa antes de imprimir
   const isCashier = user?.role === 'cashier'
 
   useEffect(() => { const id = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(id) }, [])
@@ -865,9 +866,43 @@ export default function POS({ user, onLogout }) {
     if (!win) setError('El navegador bloqueó la ventana de impresión')
   }
 
+  // Imprime el ticket con el motor de formato del servidor (mismo
+  // renderizador para la vista previa y para el papel). Si no hay impresora
+  // ESC/POS configurada o falla, el servidor devuelve via:'html' con el texto
+  // ya formado y se imprime por el camino de siempre: nunca se queda sin ticket.
+  const imprimirTicketMotor = useCallback(async (saleId, { copia = false } = {}) => {
+    try {
+      const r = await hardware.printTicket(saleId, { copia })
+      if (r.via === 'html' && r.texto) {
+        const win = imprimirTextoHtml(r.texto, `Ticket #${saleId}${copia ? ' (COPIA)' : ''}`)
+        if (!win) setError('El navegador bloqueó la ventana de impresión')
+      } else if (r.ok) {
+        notify('Ticket impreso', 'success')
+      } else {
+        setError(r.error || 'No se pudo imprimir el ticket')
+      }
+      return r
+    } catch (e) {
+      setError(e.message)
+      return null
+    }
+  }, [notify])
+
+  // Vista previa antes de imprimir: el texto viene del servidor, así que es
+  // idéntico carácter por carácter a lo que sale en papel.
+  const abrirVistaPrevia = useCallback(async (saleId, { copia = false } = {}) => {
+    try {
+      const r = await hardware.ticketPreview(saleId, { copia })
+      setPreviewTicket({ saleId, copia, texto: r.texto, ancho: r.ancho })
+    } catch (e) { setError(e.message) }
+  }, [])
+
   const handlePrintTicket = () => {
     if (!saleDone) return
-    printTicket(saleDone.sale, saleDone.items)
+    // Venta sin conexión: todavía no tiene folio del servidor, se imprime el
+    // formato HTML local como hasta ahora.
+    if (!saleDone.sale?.id) { printTicket(saleDone.sale, saleDone.items); return }
+    abrirVistaPrevia(saleDone.sale.id)
   }
 
 
@@ -1814,6 +1849,33 @@ export default function POS({ user, onLogout }) {
       {/* ---------- Aviso no bloqueante: no roba el foco y se va solo ---------- */}
       {toast && (
         <div className={`toast toast-${toast.kind}`} onClick={() => setToast(null)}>{toast.text}</div>
+      )}
+
+      {/* ---------- Vista previa del ticket antes de imprimir ---------- */}
+      {previewTicket && (
+        <div className="modal-overlay" onClick={() => setPreviewTicket(null)}
+             onKeyDown={modalKeys(() => setPreviewTicket(null), () => { imprimirTicketMotor(previewTicket.saleId, { copia: previewTicket.copia }); setPreviewTicket(null) })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'520px'}}>
+            <div className="modal-header">
+              <h3>Vista previa del ticket{previewTicket.copia ? ' (COPIA)' : ''}</h3>
+              <span className="text-muted" style={{fontSize:'0.8rem'}}>{previewTicket.ancho} columnas</span>
+            </div>
+            <p style={{fontSize:'0.8rem', color:'var(--text-muted)', margin:'0 0 0.5rem'}}>
+              Así saldrá impreso, carácter por carácter.
+            </p>
+            <pre className="ticket-preview">{previewTicket.texto}</pre>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setPreviewTicket(null)} tabIndex="0">Cerrar (Esc)</button>
+              <button className="btn btn-outline" onClick={() => abrirVistaPrevia(previewTicket.saleId, { copia: !previewTicket.copia })} tabIndex="0">
+                {previewTicket.copia ? 'Ver como original' : 'Ver como COPIA'}
+              </button>
+              <button className="btn btn-primary" tabIndex="0"
+                onClick={() => { imprimirTicketMotor(previewTicket.saleId, { copia: previewTicket.copia }); setPreviewTicket(null) }}>
+                Imprimir (Enter)
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ---------- Barra de ayuda contextual (se genera del registro) ---------- */}

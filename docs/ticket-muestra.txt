@@ -1,0 +1,203 @@
+################################
+# TICKET DE MUESTRA — 32 COLUMNAS
+################################
+     ABARROTES LA ESPERANZA     
+ AV. HIDALGO 245, COL. CENTRO,  
+         MORELIA, MICH.         
+       Tel: 443 123 4567        
+                                
+FOLIO: A-000124587              
+2026-07-30 14:32:11             
+CAJA: 01  KARINA L.             
+CLIENTE: MARIA LOPEZ            
+--------------------------------
+GOMITAS RICOLINO 30 PZ          
+   2 x 86.00              172.00
+PALETAS TUTSI POP 20 PZ         
+   1 x 39.90               39.90
+SURTIDO VERO MANIA 1KG          
+   1 x 45.00               45.00
+               Descuento @ -6.00
+REFRESCO COCA COLA 600ML        
+   3 x 18.00               54.00
+DETERGENTE ROMA 1KG             
+   1 x 27.50               27.50
+CIGARROS MARLBORO (PZA)         
+   4 x 12.50               50.00
+--------------------------------
+IVA 16% INCLUIDO           53.57
+TOTAL $                   388.40
+ARTICULOS: 12   RENGLONES: 6    
+                                
+TARJETA                   200.00
+  VISA 4825 AUTO 437669         
+EFECTIVO                  200.00
+SU CAMBIO                  11.60
+                                
+AUTORIZADO CON FIRMA ELECTRONICA
+                                
++------------------------------+
+| OBTUVISTE EN MONEDERO        |
+| DULCERIA DEPTO ABARRO  12.00 |
+| ABONA ESTE TICKET A TU       |
+| MONEDERO                     |
+| EXPIRA 7 DIAS DESPUES DE LA  |
+| COMPRA                       |
++------------------------------+
+                                
+     GRACIAS POR SU COMPRA      
+
+################################################
+# TICKET DE MUESTRA — 48 COLUMNAS
+################################################
+             ABARROTES LA ESPERANZA             
+  AV. HIDALGO 245, COL. CENTRO, MORELIA, MICH.  
+               Tel: 443 123 4567                
+                                                
+FOLIO: A-000124587           2026-07-30 14:32:11
+CAJA: 01   CAJERO: KARINA L.                    
+CLIENTE: MARIA LOPEZ                            
+------------------------------------------------
+                         PRECIO  PRECIO         
+CANT  SKU ARTICULO      REGULAR   PROMO    TOTAL
+   2 0349 GOMITAS RICOL   86.00           172.00
+   1 0358 PALETAS TUTSI   39.90            39.90
+   1 0996 SURTIDO VERO    51.00   45.00    45.00
+                               Descuento @ -6.00
+   3 1027 REFRESCO COCA   18.00            54.00
+   1 0441 DETERGENTE RO   27.50            27.50
+   4 0777 CIGARROS MARL   12.50            50.00
+------------------------------------------------
+IVA 16% INCLUIDO                           53.57
+TOTAL $                                   388.40
+ARTICULOS: 12   RENGLONES: 6                    
+                                                
+TARJETA  VISA 4825 AUTO 437669            200.00
+EFECTIVO                                  200.00
+SU CAMBIO                                  11.60
+                                                
+        AUTORIZADO CON FIRMA ELECTRONICA        
+                                                
++----------------------------------------------+
+| OBTUVISTE EN MONEDERO                        |
+| DULCERIA DEPTO ABARROTES               12.00 |
+| ABONA ESTE TICKET A TU MONEDERO              |
+| EXPIRA 7 DIAS DESPUES DE LA COMPRA           |
++----------------------------------------------+
+                                                
+             GRACIAS POR SU COMPRA              
+
+################################################################
+# TICKET DE MUESTRA — 64 COLUMNAS
+################################################################
+                     ABARROTES LA ESPERANZA                     
+          AV. HIDALGO 245, COL. CENTRO, MORELIA, MICH.          
+                       Tel: 443 123 4567                        
+                                                                
+FOLIO: A-000124587                           2026-07-30 14:32:11
+CAJA: 01   CAJERO: KARINA L.                                    
+CLIENTE: MARIA LOPEZ                                            
+----------------------------------------------------------------
+                                        PRECIO   PRECIO         
+CANT    SKU ARTICULO                   REGULARPROMOCION    TOTAL
+   2 000349 GOMITAS RICOLINO 30 PZ       86.00            172.00
+   1 000358 PALETAS TUTSI POP 20 PZ      39.90             39.90
+   1 000996 SURTIDO VERO MANIA 1KG       51.00    45.00    45.00
+                                               Descuento @ -6.00
+   3 001027 REFRESCO COCA COLA 600ML     18.00             54.00
+   1 000441 DETERGENTE ROMA 1KG          27.50             27.50
+   4 000777 CIGARROS MARLBORO (PZA)      12.50             50.00
+----------------------------------------------------------------
+IVA 16% INCLUIDO                                           53.57
+TOTAL $                                                   388.40
+ARTICULOS: 12   RENGLONES: 6                                    
+                                                                
+TARJETA  VISA 4825 AUTO 437669                            200.00
+EFECTIVO                                                  200.00
+SU CAMBIO                                                  11.60
+                                                                
+                AUTORIZADO CON FIRMA ELECTRONICA                
+                                                                
++--------------------------------------------------------------+
+| OBTUVISTE EN MONEDERO                                        |
+| DULCERIA DEPTO ABARROTES                               12.00 |
+| ABONA ESTE TICKET A TU MONEDERO                              |
+| EXPIRA 7 DIAS DESPUES DE LA COMPRA                           |
++--------------------------------------------------------------+
+                                                                
+                     GRACIAS POR SU COMPRA                      
+
+################################
+# REIMPRESION (COPIA) — 32 COLUMNAS
+################################
+     ABARROTES LA ESPERANZA     
+ AV. HIDALGO 245, COL. CENTRO,  
+         MORELIA, MICH.         
+       Tel: 443 123 4567        
+                                
+         *** COPIA ***          
+                                
+FOLIO: A-000124587              
+2026-07-30 14:32:11             
+CAJA: 01  KARINA L.             
+CLIENTE: MARIA LOPEZ            
+--------------------------------
+GOMITAS RICOLINO 30 PZ          
+   2 x 86.00              172.00
+PALETAS TUTSI POP 20 PZ         
+   1 x 39.90               39.90
+SURTIDO VERO MANIA 1KG          
+   1 x 45.00               45.00
+               Descuento @ -6.00
+REFRESCO COCA COLA 600ML        
+   3 x 18.00               54.00
+DETERGENTE ROMA 1KG             
+   1 x 27.50               27.50
+CIGARROS MARLBORO (PZA)         
+   4 x 12.50               50.00
+--------------------------------
+IVA 16% INCLUIDO           53.57
+TOTAL $                   388.40
+ARTICULOS: 12   RENGLONES: 6    
+                                
+TARJETA                   200.00
+  VISA 4825 AUTO 437669         
+EFECTIVO                  200.00
+SU CAMBIO                  11.60
+                                
+AUTORIZADO CON FIRMA ELECTRONICA
+                                
++------------------------------+
+| OBTUVISTE EN MONEDERO        |
+| ABONA ESTE TICKET A TU       |
+| MONEDERO                     |
+| VALIDO SOLO EN ESTA SUCURSAL |
+| EXPIRA 7 DIAS DESPUES DE LA  |
+| COMPRA                       |
++------------------------------+
+                                
+     GRACIAS POR SU COMPRA      
+
+################################
+# PRUEBA DE IMPRESION (instalacion)
+################################
+      PRUEBA DE IMPRESION       
+ 
+Marca la regla mas larga que
+salga en UNA sola linea:
+ 
+[32]+....1....+....2....+....3..
+[48]+....1....+....2....+....3....+....4....+...
+[64]+....1....+....2....+....3....+....4....+....5....+....6....
+ 
+Acentos: anio ninguno accion
+  ÁÉÍÓÚ áéíóú ñÑ ¿? ¡! 25°
+Si arriba se ven simbolos raros,
+cambia la pagina de codigos en
+Configuracion > Impresora.
+ 
+IZQUIERDA                       
+            CENTRADO            
+                         DERECHA
+ 
+        FIN DE LA PRUEBA        

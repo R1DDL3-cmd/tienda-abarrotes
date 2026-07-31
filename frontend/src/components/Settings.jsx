@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { auth, backup, settings as settingsApi } from '../api'
+import { auth, backup, settings as settingsApi, hardware } from '../api'
+import { imprimirTextoHtml } from '../ticketPrint'
 import { formatDate, formatDateTime } from '../dateUtils'
 import { getTheme, setTheme, applyPalette, clearPalette } from '../theme'
 import { getShortcuts, setShortcutKey, resetShortcuts, eventToKeyString, keyLabel, DEFAULT_SHORTCUTS } from '../shortcuts'
@@ -38,6 +39,47 @@ export default function Settings({ user }) {
   const handleThemeChange = (value) => {
     setTheme(value)
     setThemeState(value)
+  }
+
+  // --- Impresora de tickets ---
+  const [printer, setPrinter] = useState({ printer_columns: '32', printer_mode: 'html', printer_name: '', printer_port: '', printer_codepage: '2', printer_translit: '0' })
+  const [printers, setPrinters] = useState({ impresoras: [], puertos: [] })
+  const [testResult, setTestResult] = useState(null)
+  const [testing, setTesting] = useState(false)
+
+  useEffect(() => {
+    if (tab === 'printer') {
+      settingsApi.getPrinter().then(setPrinter).catch(() => {})
+      hardware.printers().then(setPrinters).catch(() => setPrinters({ impresoras: [], puertos: [] }))
+    }
+  }, [tab])
+
+  const handleSavePrinter = async () => {
+    try {
+      await settingsApi.updatePrinter(printer)
+      setSuccess('Configuración de impresora guardada')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
+  }
+
+  // Imprime la hoja de prueba: reglas de 32/48/64 columnas y una línea con
+  // acentos. Con eso se decide el ancho sin conocer el modelo de impresora.
+  const handleTestPrint = async () => {
+    setTesting(true); setTestResult(null); setError('')
+    try {
+      const r = await hardware.testPrint({
+        modo: printer.printer_mode,
+        impresora: printer.printer_name,
+        puerto_serie: printer.printer_port,
+        codepage: parseInt(printer.printer_codepage, 10),
+        translit: printer.printer_translit === '1',
+      })
+      setTestResult(r)
+      // Respaldo HTML: si no hay impresora ESC/POS, se manda por el camino
+      // de siempre para que igual salga la hoja de prueba.
+      if (r.via === 'html' && r.texto) imprimirTextoHtml(r.texto, 'Prueba de impresión')
+    } catch (e) { setError(e.message) }
+    setTesting(false)
   }
 
   const [palette, setPaletteState] = useState({ primary: '', success: '', danger: '', warning: '', header_bg: '', header_text: '', accent: '' })
@@ -328,6 +370,7 @@ export default function Settings({ user }) {
     { id: 'time', label: 'Hora' },
     { id: 'users', label: 'Usuarios' },
     { id: 'password', label: 'Contraseña' },
+    { id: 'printer', label: 'Impresora' },
     { id: 'security', label: 'Seguridad' },
     { id: 'backups', label: 'Respaldos' },
   ]
@@ -590,6 +633,104 @@ export default function Settings({ user }) {
           </div>
           <div className="modal-actions" style={{padding:0, marginTop:'1rem'}}>
             <button className="btn btn-primary" onClick={handleChangePassword}>Cambiar Contraseña</button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'printer' && (
+        <div className="card" style={{maxWidth:'620px', padding:'1.5rem'}}>
+          <h3 style={{marginTop:0}}>Impresora de Tickets</h3>
+          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
+            Si no sabes de cuántos milímetros es tu impresora, no importa: presiona <b>Imprimir hoja de prueba</b>,
+            mira cuál de las tres reglas sale en <b>una sola línea</b> (sin doblarse), y elige ese ancho aquí.
+          </p>
+
+          <div className="form-group">
+            <label>Ancho del papel</label>
+            <select className="input" value={printer.printer_columns}
+              onChange={e => setPrinter({...printer, printer_columns: e.target.value})}>
+              <option value="32">32 columnas — papel de 58 mm (lo más común)</option>
+              <option value="48">48 columnas — papel de 80 mm</option>
+              <option value="64">64 columnas — papel de 80 mm, letra condensada</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Cómo imprimir</label>
+            <select className="input" value={printer.printer_mode}
+              onChange={e => setPrinter({...printer, printer_mode: e.target.value})}>
+              <option value="html">Por Windows (como hasta ahora) — siempre funciona</option>
+              <option value="auto">Automático — busca la impresora de tickets sola</option>
+              <option value="raw">Impresora USB específica (más rápido)</option>
+              <option value="serial">Puerto COM (impresoras viejas)</option>
+            </select>
+          </div>
+
+          {(printer.printer_mode === 'raw' || printer.printer_mode === 'auto') && (
+            <div className="form-group">
+              <label>Impresora</label>
+              <select className="input" value={printer.printer_name}
+                onChange={e => setPrinter({...printer, printer_name: e.target.value})}>
+                <option value="">
+                  {printer.printer_mode === 'auto' ? 'Que la busque sola' : 'Elige una...'}
+                </option>
+                {(printers.impresoras || []).map(i => (
+                  <option key={i.nombre} value={i.nombre}>
+                    {i.nombre}{i.probableTicketera ? '  (parece ticketera)' : ''}{i.predeterminada ? '  ★' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {printer.printer_mode === 'serial' && (
+            <div className="form-group">
+              <label>Puerto COM</label>
+              <select className="input" value={printer.printer_port}
+                onChange={e => setPrinter({...printer, printer_port: e.target.value})}>
+                <option value="">Elige uno...</option>
+                {(printers.puertos || []).map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+          )}
+
+          <details style={{marginBottom:'1rem'}}>
+            <summary style={{cursor:'pointer', fontSize:'0.9rem', fontWeight:600}}>Acentos y caracteres especiales</summary>
+            <p style={{fontSize:'0.85rem', color:'var(--text-muted)', margin:'0.5rem 0'}}>
+              Si en la hoja de prueba las letras con acento (á é í ó ú ñ) salen como símbolos raros, cambia estas opciones.
+            </p>
+            <div className="form-group">
+              <label>Juego de caracteres</label>
+              <select className="input" value={printer.printer_codepage}
+                onChange={e => setPrinter({...printer, printer_codepage: e.target.value})}>
+                <option value="2">CP850 — Latino (lo normal)</option>
+                <option value="19">CP858</option>
+                <option value="16">Windows-1252</option>
+                <option value="0">CP437</option>
+              </select>
+            </div>
+            <label style={{display:'flex', alignItems:'center', gap:'0.5rem', fontWeight:'normal'}}>
+              <input type="checkbox" checked={printer.printer_translit === '1'}
+                onChange={e => setPrinter({...printer, printer_translit: e.target.checked ? '1' : '0'})} />
+              Quitar los acentos al imprimir (usa esto si nada más funciona)
+            </label>
+          </details>
+
+          {testResult && (
+            <div className={`alert ${testResult.ok ? 'alert-success' : 'alert-warning'}`} style={{marginBottom:'1rem'}}>
+              {testResult.ok
+                ? (testResult.via === 'html'
+                    ? 'Se envió por Windows. Revisa la ventana de impresión que se abrió.'
+                    : `Impreso directo en ${testResult.impresora || testResult.puerto}${testResult.detectada ? ' (detectada automáticamente)' : ''}.`)
+                : `No se pudo imprimir directo: ${testResult.error}. Se puede seguir usando la impresión por Windows.`}
+            </div>
+          )}
+
+          <div className="modal-actions" style={{padding:0, justifyContent:'flex-start'}}>
+            <button className="btn btn-primary" onClick={handleSavePrinter}>Guardar</button>
+            <button className="btn btn-outline" onClick={handleTestPrint} disabled={testing}>
+              {testing ? 'Imprimiendo...' : 'Imprimir hoja de prueba'}
+            </button>
           </div>
         </div>
       )}

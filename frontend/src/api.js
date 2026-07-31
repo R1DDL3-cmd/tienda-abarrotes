@@ -278,6 +278,14 @@ export const backup = {
 
 export const hardware = {
   openDrawer: () => request('/hardware/open-drawer', { method: 'POST' }),
+  printers: () => request('/hardware/printers'),
+  testPrint: (cfg) => request('/hardware/test-print', { method: 'POST', body: JSON.stringify(cfg || {}) }),
+  // La vista previa la arma el SERVIDOR con el mismo renderizador que imprime,
+  // para que sea idéntica carácter por carácter a lo que sale en el papel.
+  ticketPreview: (saleId, { ancho, copia } = {}) =>
+    request(`/hardware/ticket/${saleId}/preview?${new URLSearchParams({ ...(ancho ? { ancho } : {}), ...(copia ? { copia: '1' } : {}) })}`),
+  printTicket: (saleId, { copia } = {}) =>
+    request(`/hardware/ticket/${saleId}/print`, { method: 'POST', body: JSON.stringify({ copia: !!copia }) }),
 };
 
 export const withdrawals = {
@@ -320,4 +328,6 @@ export const settings = {
   updateStore: (data) => request('/settings/store', { method: 'PUT', body: JSON.stringify(data) }),
   getPalette: () => request('/settings/palette'),
   updatePalette: (data) => request('/settings/palette', { method: 'PUT', body: JSON.stringify(data) }),
+  getPrinter: () => request('/settings/printer'),
+  updatePrinter: (data) => request('/settings/printer', { method: 'PUT', body: JSON.stringify(data) }),
 };

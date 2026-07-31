@@ -690,3 +690,14 @@ code { background: var(--bg-hover); padding: 0.15rem 0.4rem; border-radius: 4px;
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 .toast-success { background: var(--success); color: #fff; }
 .toast-error { background: var(--danger); color: #fff; }
+
+/* --- Vista previa del ticket: monoespaciada, idéntica al papel --- */
+.ticket-preview {
+  font-family: 'Courier New', monospace;
+  font-size: 12px; line-height: 1.35;
+  background: #fff; color: #000;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px; margin: 0 0 0.75rem;
+  max-height: 55vh; overflow: auto; white-space: pre;
+}
+:root[data-theme="dark"] .ticket-preview { background: #f8fafc; }
