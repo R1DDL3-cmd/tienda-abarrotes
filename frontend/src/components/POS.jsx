@@ -3,7 +3,7 @@ import { sales, products, customers, network, accounting, withdrawals, hardware,
 import { getTheme, toggleTheme } from '../theme'
 import { enqueueSale, getQueue, syncQueue, discardFailed, retryFailed } from '../offlineQueue'
 import { formatDateTime, formatDate, formatTime, formatLiveClock } from '../dateUtils'
-import { getShortcuts, matchesShortcut, keyLabel } from '../shortcuts'
+import { keyLabel } from '../keyboard/keys.js'
 import { escapeHtml, buildStoreHeader, openTicketWindow, imprimirTextoHtml } from '../ticketPrint'
 import { modalKeys } from '../modalKeys'
 import { confirmDialog } from '../confirmDialog'
@@ -13,6 +13,7 @@ import { parseCommand, resolveCommand, ghostSuggestion } from '../keyboard/parse
 import { suspendSale, resumeSale, listSuspended, discardSuspended } from '../suspendedSales'
 import HelpBar from './HelpBar'
 import CommandPalette from './CommandPalette'
+import SkinToggle from './SkinToggle'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -367,7 +368,10 @@ export default function POS({ user, onLogout }) {
 
   // Handlers: el registro dice QUÉ tecla, esto dice QUÉ hace.
   const handlers = {
-    pos_help: () => setShowHelpSheet(true),
+    // La ayuda y la paleta son del sistema, no del POS: mismas teclas en
+    // todas las secciones (ver keyboard/registry.js).
+    sys_help: () => setShowHelpSheet(true),
+    sys_palette: () => setShowPalette(true),
     pos_search: () => setShowSearch(true),
     pos_customer: () => setCustomerModal(true),
     pos_charge: () => openPayment(),
@@ -376,7 +380,6 @@ export default function POS({ user, onLogout }) {
     pos_resume: () => openSuspendedList(),
     pos_history: () => setHistoryModal(true),
     pos_remove_line: () => removeActiveLine(),
-    pos_palette: () => setShowPalette(true),
     pos_undo: () => handleUndo(),
     pos_qty_up: () => changeQty(1),
     pos_qty_down: () => changeQty(-1),
@@ -1084,6 +1087,7 @@ export default function POS({ user, onLogout }) {
             )}
           </div>
           <div className="btn-group">
+            <SkinToggle />
             <button className="btn btn-sm btn-outline" onClick={() => setThemeState(toggleTheme())} title={theme === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}>
               {theme === 'dark' ? '☀️' : '🌙'}
             </button>
@@ -1092,25 +1096,24 @@ export default function POS({ user, onLogout }) {
               {showMoreMenu && (
                 <>
                   <div className="more-menu-backdrop" onClick={() => setShowMoreMenu(false)} />
+                  {/* El menú se genera del REGISTRO, no a mano: así ninguna
+                      acción vive solo aquí (criterio 6) y cada una muestra su
+                      tecla a la derecha, que es como se aprenden los atajos
+                      usando el mouse. */}
                   <div className="more-menu">
-                    {user?.role === 'admin' && (
-                      <>
-                        <button onClick={() => { window.location.hash = '#/inventory'; setShowMoreMenu(false) }}>Inventario</button>
-                        <button onClick={() => { window.location.hash = '#/purchases'; setShowMoreMenu(false) }}>Compras</button>
-                        <button onClick={() => { window.location.hash = '#/accounting'; setShowMoreMenu(false) }}>Contabilidad</button>
-                        <button onClick={() => { window.location.hash = '#/customers'; setShowMoreMenu(false) }}>Clientes</button>
-                      </>
-                    )}
-                    {user?.role === 'cashier' && (
-                      <>
-                        <button onClick={() => { window.location.hash = '#/purchases'; setShowMoreMenu(false) }}>Compras</button>
-                        <button onClick={() => { setCashierExpenseForm({ description: '', amount: '', category: '', notes: '' }); setShowCashierExpenseModal(true); setShowMoreMenu(false) }}>Gasto</button>
-                      </>
-                    )}
-                    <button onClick={() => { setHistoryModal(true); setShowMoreMenu(false) }}>Historial ({keyLabel(getShortcuts().pos_history.key)})</button>
-                    {user?.role === 'admin' && (
-                      <button onClick={() => { window.location.hash = '#/settings'; setShowMoreMenu(false) }}>Configuración</button>
-                    )}
+                    {actionsFor({ state: STATES.CAPTURA, role: user?.role })
+                      .filter(a => !a.helpBar)
+                      .map(a => (
+                        <button key={a.id} onClick={() => {
+                          setShowMoreMenu(false)
+                          if (a.hash) { window.location.hash = a.hash; return }
+                          const run = handlersRef.current[a.id]
+                          if (run) run()
+                        }}>
+                          <span>{a.nombre}</span>
+                          <span className="menu-key">{a.keys.length ? keyLabel(a.keys[0]) : ''}</span>
+                        </button>
+                      ))}
                   </div>
                 </>
               )}
@@ -1255,9 +1258,9 @@ export default function POS({ user, onLogout }) {
                             <input type="number" className="qty-input" min={qtyMin} step={qtyStep} value={item.quantity} onChange={(e) => updateCartItem(item.product_id, 'quantity', parseFloat(e.target.value) || 0, item.is_individual)} />
                             {unitLabel && <span className="unit-label">{unitLabel}</span>}
                           </td>
-                          <td>{isCashier ? <span className="price-display">{formatMoney(item.unit_price)}</span> : <input type="number" className="price-input" step={isWeight ? "0.01" : "1"} value={item.unit_price} onChange={(e) => updateCartItem(item.product_id, 'unit_price', parseFloat(e.target.value) || 0, item.is_individual)} />}</td>
+                          <td className="price-cell">{isCashier ? <span className="money money-line">{formatMoney(item.unit_price)}</span> : <input type="number" className="price-input" step={isWeight ? "0.01" : "1"} value={item.unit_price} onChange={(e) => updateCartItem(item.product_id, 'unit_price', parseFloat(e.target.value) || 0, item.is_individual)} />}</td>
                           <td>{isCashier ? <span className="price-display">$0.00</span> : <input type="number" className="disc-input" step="0.01" value={item.discount} disabled={isCashier} onChange={(e) => updateCartItem(item.product_id, 'discount', parseFloat(e.target.value) || 0, item.is_individual)} />}</td>
-                          <td className="subtotal-cell">{formatMoney(item.subtotal)}</td>
+                          <td className="subtotal-cell money">{formatMoney(item.subtotal)}</td>
                           <td><button className="btn btn-danger btn-sm" onClick={() => removeFromCart(item.product_id, item.is_individual)}>X</button></td>
                         </tr>
                       )})}
@@ -1271,16 +1274,18 @@ export default function POS({ user, onLogout }) {
           <div className="pos-right">
             <div className="pos-summary">
               <div className="summary-row">
-                <span>Subtotal:</span>
-                <span>{formatMoney(subtotal)}</span>
+                <span>Subtotal</span>
+                <span className="money money-sub">{formatMoney(subtotal)}</span>
               </div>
               <div className="summary-row">
-                <span>Descuento total:</span>
+                <span>Descuento</span>
                 <input type="number" className="discount-input" step="0.01" value={totalDiscount} disabled={user?.role === 'cashier'} onChange={(e) => setTotalDiscount(parseFloat(e.target.value) || 0)} />
               </div>
-              <div className="summary-row total-row">
-                <span>TOTAL:</span>
-                <span>{formatMoney(total)}</span>
+              {/* El TOTAL en su propia escala: es la cifra que el cajero lee de
+                  reojo desde un metro mientras cuenta el dinero. */}
+              <div className="summary-total">
+                <span className="summary-total-label">Total a pagar</span>
+                <span className="money money-total">{formatMoney(total)}</span>
               </div>
             </div>
 
@@ -1288,8 +1293,9 @@ export default function POS({ user, onLogout }) {
               <button className="btn btn-secondary btn-block" onClick={() => setCustomerModal(true)}>
                 {selectedCustomer ? `Cliente: ${selectedCustomer.name}` : 'Seleccionar Cliente (Fiado)'}
               </button>
-              <button className="btn btn-primary btn-lg btn-block" onClick={openPayment}>
-                Cobrar ({formatMoney(total)})
+              <button className="btn btn-primary btn-lg btn-block btn-cobrar" onClick={openPayment}>
+                <span>Cobrar</span>
+                <span className="money money-sub">{formatMoney(total)}</span>
               </button>
               <button className="btn btn-outline btn-block" onClick={() => { setCart([]); setTotalDiscount(0); setSelectedCustomer(null) }}>
                 Cancelar Venta
@@ -1303,7 +1309,19 @@ export default function POS({ user, onLogout }) {
         <div className="modal-overlay" onKeyDown={modalKeys(() => setPaymentModal(false), () => { if (getPaymentTotal() >= total) handleCompleteSale() })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2>Cobrar Venta</h2>
-            <p className="modal-total">Total a cobrar: {formatMoney(total)}</p>
+            {/* Las dos cifras que importan al cobrar —lo que se cobra y lo que
+                se devuelve— en tamaño de POS comercial, lado a lado y siempre
+                en el mismo sitio, para leerlas sin dejar de contar billetes. */}
+            <div className="pay-figures">
+              <div className="pay-figure">
+                <span className="pay-figure-label">Total a cobrar</span>
+                <span className="money money-pay">{formatMoney(total)}</span>
+              </div>
+              <div className={`pay-figure ${paymentDiff >= 0 ? 'pay-figure-change' : 'pay-figure-due'}`}>
+                <span className="pay-figure-label">{paymentDiff >= 0 ? 'Cambio' : 'Falta'}</span>
+                <span className="money money-pay">{formatMoney(paymentDiff >= 0 ? change : Math.abs(paymentDiff))}</span>
+              </div>
+            </div>
 
             <div className="payments-list">
               {payments.map((p, i) => (
@@ -1314,7 +1332,7 @@ export default function POS({ user, onLogout }) {
                     <option value="transfer">Transferencia</option>
                     {user?.role !== 'cashier' && <option value="credit">Fiado/Crédito</option>}
                   </select>
-                  <input ref={i === 0 ? paymentRef : null} type="number" step="0.01" placeholder="Monto" value={p.amount} onChange={(e) => updatePayment(i, 'amount', e.target.value)} />
+                  <input ref={i === 0 ? paymentRef : null} className="input-money" type="number" step="0.01" placeholder="Monto" value={p.amount} onChange={(e) => updatePayment(i, 'amount', e.target.value)} />
                   {payments.length > 1 && <button className="btn btn-sm btn-danger" onClick={() => removePayment(i)}>X</button>}
                 </div>
               ))}
@@ -1323,9 +1341,7 @@ export default function POS({ user, onLogout }) {
             <button className="btn btn-sm btn-outline" onClick={addPaymentMethod}>+ Agregar otro pago</button>
 
             <div className="payment-summary">
-              <p>Total pagado: {formatMoney(getPaymentTotal())}</p>
-              {paymentDiff >= 0 && <p className="change-amount">Cambio: {formatMoney(change)}</p>}
-              {paymentDiff < 0 && <p className="due-amount">Falta: {formatMoney(Math.abs(paymentDiff))}</p>}
+              <span>Total pagado</span> <span className="money money-sub">{formatMoney(getPaymentTotal())}</span>
             </div>
 
             <div className="modal-actions">

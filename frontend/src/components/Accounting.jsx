@@ -1,4 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useKeyboardLayer } from '../keyboard/input.js'
+import { STATES } from '../keyboard/registry.js'
+import HelpBar from './HelpBar'
+import KeyHelpSheet from './KeyHelpSheet'
 import { accounting, sales } from '../api'
 import { formatDateTime, formatDate, isSameLocalDay } from '../dateUtils'
 import Events from './Events'
@@ -193,11 +197,64 @@ export default function Accounting({ user, onLogout }) {
     ? Math.max(...dashData.dailySales.map(d => d.total))
     : 1
 
+  // ============================================================
+  // CAPA DE TECLADO
+  // ← → cambian de pestaña · Re Pág / Av Pág mueven el rango de fechas ·
+  // F4 exporta lo que se está viendo · F2 busca. Todo sale del registro.
+  // ============================================================
+
+  // Mueve el rango de fechas un tramo completo hacia atrás o hacia adelante,
+  // conservando su duración: si estabas viendo una semana, te mueves semana a
+  // semana; si un mes, mes a mes.
+  const moverPeriodo = useCallback((direccion) => {
+    const hoy = new Date()
+    const desde = dateFrom ? new Date(dateFrom + 'T00:00:00') : new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+    const hasta = dateTo ? new Date(dateTo + 'T00:00:00') : hoy
+    const dias = Math.max(1, Math.round((hasta - desde) / 86400000) + 1)
+    const iso = (d) => d.toISOString().split('T')[0]
+    const nuevoDesde = new Date(desde); nuevoDesde.setDate(desde.getDate() + direccion * dias)
+    const nuevoHasta = new Date(hasta); nuevoHasta.setDate(hasta.getDate() + direccion * dias)
+    setDateFrom(iso(nuevoDesde))
+    setDateTo(iso(nuevoHasta))
+  }, [dateFrom, dateTo])
+
+  // F4 exporta LO QUE SE ESTÁ VIENDO: no hay que buscar el botón correcto de
+  // cada pestaña.
+  const exportarActual = useCallback(() => {
+    if (tab === 'reports') exportCSV(historyData?.sales || [], 'ventas_periodo.csv')
+    else if (tab === 'expenses') exportCSV(expenses, 'gastos.csv')
+    else if (tab === 'profitProducts') exportCSV(profitRows, 'utilidad.csv')
+    else if (tab === 'movements') exportCSV(movements, 'movimientos_caja.csv')
+    else if (tab === 'dashboard') exportCSV(topProducts, 'productos_mas_vendidos.csv')
+    else setError('Esta pestaña no tiene nada que exportar')
+  }, [tab, topProducts, historyData, expenses, profitRows, movements])
+
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
+
+  useKeyboardLayer({
+    state: showKeyboardHelp || showExpenseForm ? STATES.MODAL : STATES.CONTABILIDAD,
+    role: user?.role,
+    handlers: {
+      sys_help: () => setShowKeyboardHelp(true),
+      con_export: () => exportarActual(),
+      // Cada pestaña filtra por cosas distintas (fechas, tipo de movimiento,
+      // categoría): F2 lleva el foco al primer filtro de la que esté abierta.
+      con_search: () => document.querySelector('.accounting-page input, .accounting-page select')?.focus(),
+      // Funcional a propósito: dos flechas seguidas llegan antes del siguiente
+      // render, y leyendo el índice del render anterior solo avanzaría una.
+      con_tab_prev: () => setTab(actual => tabs[Math.max(0, tabs.findIndex(t => t.id === actual) - 1)].id),
+      con_tab_next: () => setTab(actual => tabs[Math.min(tabs.length - 1, tabs.findIndex(t => t.id === actual) + 1)].id),
+      con_period_prev: () => moverPeriodo(-1),
+      con_period_next: () => moverPeriodo(1),
+    },
+  })
+
   return (
     <div className="accounting-page">
       <div className="page-header">
         <h2>Contabilidad</h2>
         <div className="header-actions">
+          <button className="btn btn-sm btn-outline" onClick={exportarActual}>Exportar <kbd>F4</kbd></button>
         </div>
       </div>
 
@@ -534,6 +591,13 @@ export default function Accounting({ user, onLogout }) {
         <Events user={user} />
       )}
 
+      {showKeyboardHelp && (
+        <KeyHelpSheet state={STATES.CONTABILIDAD} role={user?.role} titulo="Teclas de Contabilidad"
+          onClose={() => setShowKeyboardHelp(false)} />
+      )}
+
+      <HelpBar state={showKeyboardHelp || showExpenseForm ? STATES.MODAL : STATES.CONTABILIDAD} role={user?.role}
+        extra={(dateFrom || dateTo) ? <span className="help-key">{dateFrom || '…'} → {dateTo || 'hoy'}</span> : null} />
     </div>
   )
 }

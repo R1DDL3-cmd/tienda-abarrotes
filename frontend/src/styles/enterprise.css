@@ -1,0 +1,374 @@
+/* ============================================================================
+   ESTÉTICA "ENTERPRISE CLASSIC"
+   Solo se carga como capa de sobreescritura: todo lo que se puede expresar
+   como token ya está en tokens.css (color, densidad, radio, sombra, tipografía).
+   Aquí va únicamente lo ESTRUCTURAL que un token no puede describir: bordes de
+   rejilla, pestañas clásicas, barras de menú, ausencia de animación.
+
+   Regla de oro de este archivo: ningún cambio es estético por gusto. Cada
+   bloque lleva escrito qué gana el usuario en tiempo o en claridad.
+   ============================================================================ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1. SIN MOVIMIENTO
+   Una animación de 200 ms repetida 400 veces al día son 80 segundos de espera
+   pura. La interfaz cambia en el mismo fotograma del clic.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] * {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+}
+:root[data-skin="enterprise"] .btn:active { transform: none; }
+:root[data-skin="enterprise"] .modal { animation: none; }
+:root[data-skin="enterprise"] .toast { animation: none; }
+:root[data-skin="enterprise"] .cart-table tr.line-added > td { animation: none; background: var(--bg-accent) !important; }
+/* El spinner de carga sí gira: es información (el sistema está trabajando),
+   no decoración. */
+:root[data-skin="enterprise"] .spinner { animation-duration: 0.7s !important; border-radius: 50%; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2. TIPOGRAFÍA Y BASE
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] body { -webkit-font-smoothing: auto; line-height: 1.35; }
+:root[data-skin="enterprise"] h1, :root[data-skin="enterprise"] h2,
+:root[data-skin="enterprise"] h3, :root[data-skin="enterprise"] h4 {
+  font-weight: 600; letter-spacing: 0;
+}
+:root[data-skin="enterprise"] h2 { font-size: 1.15rem; }
+:root[data-skin="enterprise"] h3 { font-size: 1rem; }
+:root[data-skin="enterprise"] h4 { font-size: 0.875rem; }
+/* La marca de agua del logo distrae en una herramienta de trabajo */
+:root[data-skin="enterprise"] .logo-watermark { display: none; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3. BARRA SUPERIOR = BARRA DE MENÚ
+   Gris claro con texto oscuro y una línea de 1px, como una barra de menú de
+   aplicación de escritorio. Ocupa 32px en vez de 56px: 24px más de datos.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .admin-header,
+:root[data-skin="enterprise"] .pos-header {
+  box-shadow: none; border-bottom: 1px solid var(--border);
+  height: auto; min-height: 32px; padding: 0.15rem 0.5rem; gap: 0.5rem;
+}
+:root[data-skin="enterprise"] .admin-header h1,
+:root[data-skin="enterprise"] .pos-header-left h1 { font-size: 0.9rem; font-weight: 600; }
+:root[data-skin="enterprise"] .header-user,
+:root[data-skin="enterprise"] .header-date,
+:root[data-skin="enterprise"] .header-today,
+:root[data-skin="enterprise"] .header-register-info {
+  border-radius: 0; background: transparent; opacity: 1; color: var(--text-secondary);
+  border-left: 1px solid var(--border); padding: 0 0.5rem; font-size: 0.75rem;
+}
+:root[data-skin="enterprise"] .header-register-info { font-variant-numeric: tabular-nums; }
+/* Los botones de la barra heredaban bordes blancos translúcidos pensados para
+   una barra oscura; sobre gris claro eran invisibles. */
+:root[data-skin="enterprise"] .header-right .btn-outline,
+:root[data-skin="enterprise"] .pos-header-right .btn-outline {
+  color: var(--text); border-color: var(--border); background: var(--bg);
+}
+:root[data-skin="enterprise"] .header-right .btn-outline:hover,
+:root[data-skin="enterprise"] .pos-header-right .btn-outline:hover {
+  background: var(--bg-accent); color: var(--text); border-color: var(--primary);
+}
+:root[data-skin="enterprise"] .pos-header-right .btn-group + .btn-group {
+  border-left: 1px solid var(--border); height: 18px; padding-left: 0.5rem; margin-left: 0.5rem;
+}
+/* Pestañas de sección: rectángulos contiguos, la activa "hundida" con una
+   franja azul. Se lee el lugar donde estás sin buscar color de fondo. */
+:root[data-skin="enterprise"] .admin-nav { gap: 0; }
+:root[data-skin="enterprise"] .nav-btn {
+  border-radius: 0; opacity: 1; color: var(--text); font-weight: 400;
+  padding: 0.25rem 0.9rem; min-height: 26px; border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+}
+:root[data-skin="enterprise"] .nav-btn:hover { background: var(--bg-accent); }
+:root[data-skin="enterprise"] .nav-btn.active {
+  background: var(--bg-card); border-color: var(--border);
+  border-bottom-color: var(--primary); font-weight: 600;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   4. BOTONES
+   Rectangulares, altura uniforme, 1px de borde. El azul se reserva para LA
+   acción principal de cada pantalla: si todo es azul, nada destaca.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .btn {
+  border-radius: 0; font-weight: 400; padding: 0.2rem 0.9rem;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text); transition: none;
+}
+:root[data-skin="enterprise"] .btn:hover:not(:disabled) { background: var(--bg-accent); border-color: var(--primary); }
+:root[data-skin="enterprise"] .btn:active:not(:disabled) { background: var(--bg-hover); }
+:root[data-skin="enterprise"] .btn:focus-visible { outline: 1px dotted var(--text); outline-offset: -3px; }
+:root[data-skin="enterprise"] .btn-primary,
+:root[data-skin="enterprise"] .btn-primary:hover:not(:disabled) {
+  background: var(--primary); border-color: var(--primary-dark); color: #fff; font-weight: 600;
+}
+:root[data-skin="enterprise"] .btn-primary:hover:not(:disabled) { background: var(--primary-light); }
+:root[data-skin="enterprise"] .btn-secondary {
+  background: var(--bg); border-color: var(--border); color: var(--text); font-weight: 400;
+}
+:root[data-skin="enterprise"] .btn-secondary:hover:not(:disabled) { background: var(--bg-accent); border-color: var(--primary); }
+:root[data-skin="enterprise"] .btn-success { background: var(--success); border-color: var(--success-dark); color: #fff; }
+:root[data-skin="enterprise"] .btn-danger { background: var(--danger); border-color: var(--danger-dark); color: #fff; }
+:root[data-skin="enterprise"] .btn-warning { background: var(--warning); border-color: var(--warning-dark); color: #fff; }
+:root[data-skin="enterprise"] .btn-outline { background: var(--bg); border-color: var(--border); color: var(--text); }
+:root[data-skin="enterprise"] .btn-sm { padding: 0.1rem 0.5rem; font-size: 0.75rem; }
+:root[data-skin="enterprise"] .btn-lg { padding: 0.35rem 1.1rem; font-size: 1rem; font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   5. CAMPOS
+   Altura uniforme, borde de 1px, foco azul sin halo. El halo de 3px del tema
+   moderno desplaza visualmente los campos vecinos en formularios densos.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] input,
+:root[data-skin="enterprise"] select,
+:root[data-skin="enterprise"] textarea {
+  border-radius: 0; min-height: var(--control-h); font-size: 0.875rem;
+}
+:root[data-skin="enterprise"] input:focus,
+:root[data-skin="enterprise"] select:focus,
+:root[data-skin="enterprise"] textarea:focus {
+  border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary);
+}
+:root[data-skin="enterprise"] input:disabled,
+:root[data-skin="enterprise"] select:disabled { background: var(--bg-hover); color: var(--text-muted); }
+:root[data-skin="enterprise"] textarea { min-height: 48px; }
+:root[data-skin="enterprise"] .input-lg { font-size: 1rem; padding: 0.3rem 0.5rem; min-height: var(--control-h-lg); }
+:root[data-skin="enterprise"] .form-group { margin-bottom: 0.5rem; }
+:root[data-skin="enterprise"] .form-group label { font-size: 0.78rem; font-weight: 400; color: var(--text-secondary); margin-bottom: 0.15rem; }
+/* Campos numéricos en línea (cantidad, precio, descuento dentro de tablas) */
+:root[data-skin="enterprise"] .qty-input,
+:root[data-skin="enterprise"] .price-input,
+:root[data-skin="enterprise"] .disc-input,
+:root[data-skin="enterprise"] .discount-input {
+  border-radius: 0; min-height: var(--control-h-sm); font-variant-numeric: tabular-nums;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   6. TABLAS — el componente más importante del sistema
+   Rejilla con líneas verticales y horizontales de 1px: con 12 columnas de
+   números, la vista sigue el renglón sin perderse. Encabezado fijo, denso,
+   ordenable. Selección azul completa, no un borde.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .table,
+:root[data-skin="enterprise"] .cart-table {
+  border-radius: 0; box-shadow: none; border: 1px solid var(--border);
+  border-collapse: collapse; font-size: 0.82rem;
+}
+:root[data-skin="enterprise"] .table th,
+:root[data-skin="enterprise"] .cart-table th {
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border-light);
+  text-transform: none; letter-spacing: 0; font-size: 0.78rem;
+  font-weight: 600; color: var(--text); position: sticky; top: 0; z-index: 1;
+}
+:root[data-skin="enterprise"] .table td,
+:root[data-skin="enterprise"] .cart-table td {
+  border-bottom: 1px solid var(--border-light);
+  border-right: 1px solid var(--border-light);
+}
+:root[data-skin="enterprise"] .table th:last-child,
+:root[data-skin="enterprise"] .table td:last-child,
+:root[data-skin="enterprise"] .cart-table th:last-child,
+:root[data-skin="enterprise"] .cart-table td:last-child { border-right: none; }
+:root[data-skin="enterprise"] .table tr:last-child td { border-bottom: 1px solid var(--border-light); }
+:root[data-skin="enterprise"] .table tr:hover,
+:root[data-skin="enterprise"] .cart-table tbody tr:hover { background: var(--bg-hover); }
+:root[data-skin="enterprise"] .row-selected,
+:root[data-skin="enterprise"] .cart-table tr.line-active > td {
+  background: var(--bg-accent) !important;
+}
+:root[data-skin="enterprise"] .cart-table tr.line-active > td:first-child { box-shadow: inset 2px 0 0 var(--primary); }
+:root[data-skin="enterprise"] .table-sm { font-size: 0.76rem; }
+:root[data-skin="enterprise"] .pagination { padding: 0.35rem; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   7. PANELES
+   Sin tarjetas flotantes: superficies planas separadas por una línea. El
+   contenido empieza pegado al borde, sin 20px de aire alrededor.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .card,
+:root[data-skin="enterprise"] .dash-card,
+:root[data-skin="enterprise"] .search-panel,
+:root[data-skin="enterprise"] .cart-section,
+:root[data-skin="enterprise"] .pos-summary,
+:root[data-skin="enterprise"] .users-section,
+:root[data-skin="enterprise"] .products-section,
+:root[data-skin="enterprise"] .suppliers-panel,
+:root[data-skin="enterprise"] .purchases-panel,
+:root[data-skin="enterprise"] .page-header {
+  border-radius: 0; box-shadow: none; border: 1px solid var(--border);
+  padding: var(--panel-pad); margin-bottom: 0;
+}
+:root[data-skin="enterprise"] .dash-card:hover { box-shadow: none; }
+:root[data-skin="enterprise"] .page-header { margin-bottom: 0.5rem; padding: 0.35rem 0.6rem; }
+:root[data-skin="enterprise"] .page-header h2 { font-size: 1rem; }
+:root[data-skin="enterprise"] .card { margin-bottom: 0.5rem; }
+:root[data-skin="enterprise"] .admin-content { padding: 0.5rem; }
+:root[data-skin="enterprise"] .pos-container { padding: 0.5rem; gap: 0.5rem; }
+:root[data-skin="enterprise"] .pos-left,
+:root[data-skin="enterprise"] .pos-right { gap: 0.5rem; }
+:root[data-skin="enterprise"] .dashboard-grid { gap: 0.5rem; margin-bottom: 0.5rem; }
+:root[data-skin="enterprise"] .filters { gap: 0.35rem; margin-bottom: 0.5rem; }
+:root[data-skin="enterprise"] .cart-header { padding: 0.25rem 0.5rem; background: var(--bg); border-bottom: 1px solid var(--border); }
+:root[data-skin="enterprise"] .cart-header h3 { font-size: 0.85rem; }
+:root[data-skin="enterprise"] .supplier-card { border-radius: 0; margin-bottom: -1px; }
+:root[data-skin="enterprise"] .supplier-card.active { background: var(--bg-accent); border-color: var(--primary); }
+:root[data-skin="enterprise"] .network-bar { border-bottom: 1px solid var(--border); padding: 0.1rem 0.5rem; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   8. PESTAÑAS clásicas
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .tabs {
+  border-radius: 0; box-shadow: none; background: transparent; padding: 0;
+  gap: 0; margin-bottom: 0; border-bottom: 1px solid var(--border);
+}
+:root[data-skin="enterprise"] .tab-btn {
+  border-radius: 0; flex: 0 0 auto; font-weight: 400; color: var(--text);
+  border: 1px solid transparent; border-bottom: none; padding: 0.25rem 0.9rem;
+  margin-bottom: -1px;
+}
+:root[data-skin="enterprise"] .tab-btn:hover:not(.active) { background: var(--bg-accent); }
+:root[data-skin="enterprise"] .tab-btn.active {
+  background: var(--bg-card); color: var(--text); font-weight: 600;
+  border-color: var(--border); box-shadow: none;
+  border-top: 2px solid var(--primary);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   9. DIÁLOGOS
+   Ventana con barra de título, no una tarjeta flotante con sombra difusa.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .modal-overlay { background: rgba(0,0,0,0.4); backdrop-filter: none; padding: 0.5rem; }
+:root[data-skin="enterprise"] .modal {
+  border-radius: 0; box-shadow: none; border: 1px solid var(--border);
+  padding: 0; overflow: hidden; display: flex; flex-direction: column;
+}
+/* El primer encabezado del diálogo se convierte en barra de título */
+:root[data-skin="enterprise"] .modal > h2:first-child,
+:root[data-skin="enterprise"] .modal > h3:first-child {
+  background: var(--header-bg); color: var(--header-text);
+  margin: 0 0 0.6rem; padding: 0.3rem 0.6rem; font-size: 0.9rem; font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+:root[data-skin="enterprise"] .modal > *:not(h2):not(h3):not(.modal-actions) { margin-left: 0.7rem; margin-right: 0.7rem; }
+:root[data-skin="enterprise"] .modal-header {
+  background: var(--header-bg); color: var(--header-text);
+  margin: 0 0 0.6rem; padding: 0.25rem 0.6rem; border-bottom: 1px solid var(--border);
+}
+:root[data-skin="enterprise"] .modal-header h3 { margin: 0; }
+:root[data-skin="enterprise"] .modal-actions {
+  margin: 0.6rem 0 0; padding: 0.4rem 0.6rem; background: var(--bg);
+  border-top: 1px solid var(--border); gap: 0.35rem;
+}
+:root[data-skin="enterprise"] .modal-body { padding: 0 0.1rem; }
+:root[data-skin="enterprise"] .form-grid { gap: 0.4rem; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   10. MENÚS
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .more-menu,
+:root[data-skin="enterprise"] .product-dropdown {
+  border-radius: 0; box-shadow: none; border: 1px solid var(--border);
+  padding: 0; top: 100%; gap: 0;
+}
+:root[data-skin="enterprise"] .more-menu button {
+  border-radius: 0; min-height: 24px; padding: 0.2rem 0.7rem; font-size: 0.82rem;
+}
+:root[data-skin="enterprise"] .more-menu button:hover,
+:root[data-skin="enterprise"] .product-dropdown-item:hover { background: var(--bg-accent); }
+:root[data-skin="enterprise"] .product-dropdown-item { padding: 0.2rem 0.5rem; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   11. AVISOS, ETIQUETAS Y ESTADOS
+   Rectángulos con borde: se distinguen por forma y posición, no por píldoras
+   de colores.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .alert {
+  border-radius: 0; padding: 0.3rem 0.6rem; margin-bottom: 0.4rem;
+  border: 1px solid; border-left-width: 4px;
+}
+:root[data-skin="enterprise"] .alert-error { background: #fdf2f1; border-color: var(--danger); color: var(--danger-dark); }
+:root[data-skin="enterprise"] .alert-success { background: #f1f8f1; border-color: var(--success); color: var(--success-dark); }
+:root[data-skin="enterprise"] .alert-warning { background: #fdf8ef; border-color: var(--warning); color: var(--warning-dark); }
+:root[data-skin="enterprise"] .badge,
+:root[data-skin="enterprise"] .customer-badge,
+:root[data-skin="enterprise"] .state-badge {
+  border-radius: 0; padding: 0 0.35rem; font-weight: 600; font-size: 0.72rem;
+  border: 1px solid currentColor; letter-spacing: 0;
+}
+:root[data-skin="enterprise"] .state-badge { padding: 0 0.5rem; }
+:root[data-skin="enterprise"] .offline-banner { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+:root[data-skin="enterprise"] .toast {
+  border-radius: 0; box-shadow: none; border: 1px solid var(--border);
+  padding: 0.3rem 0.8rem;
+}
+:root[data-skin="enterprise"] .sale-done-icon { border-radius: 0; box-shadow: none; width: 64px; height: 64px; font-size: 2rem; }
+:root[data-skin="enterprise"] .bar-track { border-radius: 0; background: var(--bg-hover); border: 1px solid var(--border-light); height: 16px; }
+:root[data-skin="enterprise"] .bar-fill { border-radius: 0; background: var(--primary); transition: none; }
+:root[data-skin="enterprise"] code { border-radius: 0; background: var(--bg-hover); font-family: var(--font-mono); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   12. LOGIN — sin degradado; misma herramienta, misma cara
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .login-page { background: var(--bg); }
+:root[data-skin="enterprise"] .login-card {
+  border-radius: 0; box-shadow: none; border: 1px solid var(--border); padding: 1.5rem;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   13. CAPA DE TECLADO — barra de ayuda, paleta y línea de comando
+   La barra de teclas es el elemento más "clásico" del sistema: función y
+   etiqueta, como una aplicación de consola. Aquí solo se cuadra.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .help-bar {
+  box-shadow: none; border-top: 1px solid var(--border);
+  background: var(--bg); color: var(--text); min-height: 26px; padding: 0.1rem 0.5rem;
+}
+:root[data-skin="enterprise"] .help-bar-toggle { color: var(--text); }
+:root[data-skin="enterprise"] .help-bar kbd,
+:root[data-skin="enterprise"] .palette kbd,
+:root[data-skin="enterprise"] .help-sheet-row kbd {
+  border-radius: 0; background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text); font-family: var(--font-mono); font-weight: 600;
+}
+:root[data-skin="enterprise"] .pos-page,
+:root[data-skin="enterprise"] .admin-content { padding-bottom: 32px; }
+:root[data-skin="enterprise"] .palette {
+  border-radius: 0; box-shadow: none; border: 1px solid var(--border);
+}
+:root[data-skin="enterprise"] .palette-input { font-size: 1rem; padding: 0.4rem 0.6rem; }
+:root[data-skin="enterprise"] .palette-item { padding: 0.2rem 0.6rem; border-left-width: 2px; }
+:root[data-skin="enterprise"] .barcode-input .input-group input {
+  border-radius: 0; border-width: 1px; padding: 0.3rem 0.5rem; font-size: 1rem;
+}
+:root[data-skin="enterprise"] .barcode-input .input-group input:focus {
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+:root[data-skin="enterprise"] .command-ghost { padding: 0 0.5rem; }
+:root[data-skin="enterprise"] .change-hero { border-radius: 0; padding: 1rem; margin: 0.25rem 0 0.5rem; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   14. DINERO — se mantiene grande y de ancho fijo; es el único elemento al
+   que la austeridad no aplica.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] .summary-total { border-top: 2px solid var(--text); }
+:root[data-skin="enterprise"] .summary-total-label { letter-spacing: 0.1em; }
+:root[data-skin="enterprise"] .pos-summary { padding: 0.4rem 0.6rem; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   15. BARRAS DE DESPLAZAMIENTO clásicas: anchas, cuadradas, agarrables
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] ::-webkit-scrollbar { width: 14px; height: 14px; }
+:root[data-skin="enterprise"] ::-webkit-scrollbar-track { background: var(--bg); border-left: 1px solid var(--border-light); }
+:root[data-skin="enterprise"] ::-webkit-scrollbar-thumb { background: #b8b8b8; border-radius: 0; border: 1px solid var(--border-light); }
+:root[data-skin="enterprise"] ::-webkit-scrollbar-thumb:hover { background: #9a9a9a; }
+:root[data-skin="enterprise"][data-theme="dark"] ::-webkit-scrollbar-thumb { background: #4a4a4f; }
+:root[data-skin="enterprise"][data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #5c5c62; }
+
+/* --- Avisos en tema oscuro (los fondos claros de arriba no aplican) --- */
+:root[data-skin="enterprise"][data-theme="dark"] .alert-error { background: rgba(241,76,76,0.12); }
+:root[data-skin="enterprise"][data-theme="dark"] .alert-success { background: rgba(78,201,78,0.12); }
+:root[data-skin="enterprise"][data-theme="dark"] .alert-warning { background: rgba(204,167,0,0.12); }
+:root[data-skin="enterprise"][data-theme="dark"] .ticket-preview { background: #f0f0f0; }

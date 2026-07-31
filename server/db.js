@@ -749,6 +749,46 @@ const SCHEMA_MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id);
     `);
   },
+  // v15: un producto puede comprarse a VARIOS proveedores. Hasta ahora la
+  // relación era 1 a 1 (products.supplier_id), lo que obligaba a elegir uno
+  // solo aunque el refresco se le compre a dos distribuidores según quién
+  // tenga existencia o mejor precio ese día.
+  //
+  // products.supplier_id NO desaparece: pasa a significar "proveedor
+  // habitual" (el que trae is_preferred = 1). Así todo lo que ya existía
+  // —importación de Excel, pedidos, el filtro de Compras— sigue funcionando
+  // sin cambios, y el vínculo múltiple es aditivo.
+  //
+  // Cada vínculo guarda su propio costo: el mismo producto casi nunca cuesta
+  // igual con dos proveedores, y ese dato es justo el que decide a quién
+  // pedirle.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS product_suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        supplier_id INTEGER NOT NULL,
+        purchase_price REAL,
+        supplier_sku TEXT,
+        is_preferred INTEGER DEFAULT 0,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(product_id, supplier_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_product_suppliers_product ON product_suppliers(product_id);
+      CREATE INDEX IF NOT EXISTS idx_product_suppliers_supplier ON product_suppliers(supplier_id);
+    `);
+    // Traspaso del vínculo único que ya existía: cada producto con proveedor
+    // arranca con ese mismo proveedor como habitual y su costo actual.
+    const rows = db.prepare(
+      'SELECT id, supplier_id, purchase_price FROM products WHERE supplier_id IS NOT NULL'
+    ).all();
+    const insert = db.prepare(
+      `INSERT OR IGNORE INTO product_suppliers (product_id, supplier_id, purchase_price, is_preferred)
+       VALUES (?, ?, ?, 1)`
+    );
+    for (const r of rows) insert.run(r.id, r.supplier_id, r.purchase_price);
+  },
 ];
 
 function getSchemaVersion(db) {

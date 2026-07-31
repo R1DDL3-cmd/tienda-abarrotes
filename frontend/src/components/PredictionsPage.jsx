@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react'
 import PredictionsTab from './PredictionsTab'
 import { events } from '../api'
 import { formatLiveClock } from '../dateUtils'
+import { STATES } from '../keyboard/registry.js'
+import HelpBar from './HelpBar'
+import KeyHelpSheet from './KeyHelpSheet'
 
 function formatDate(d) {
   if (!d) return ''
@@ -15,6 +18,7 @@ const IMPACT_LEVELS = [
 ]
 
 export default function PredictionsPage({ user, onLogout }) {
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
   const [showEventForm, setShowEventForm] = useState(false)
   const [upcomingEvents, setUpcomingEvents] = useState([])
   const [error, setError] = useState('')
@@ -156,9 +160,15 @@ export default function PredictionsPage({ user, onLogout }) {
             </div>
           )}
 
-          <PredictionsTab />
+          <PredictionsTab keyboard role={user?.role} onHelp={() => setShowKeyboardHelp(true)} />
         </div>
+
+        {showKeyboardHelp && (
+          <KeyHelpSheet state={STATES.PROYECTOR} role={user?.role} titulo="Teclas del Proyector"
+            onClose={() => setShowKeyboardHelp(false)} />
+        )}
       </main>
+      <HelpBar state={STATES.PROYECTOR} role={user?.role} />
     </div>
   )
 }

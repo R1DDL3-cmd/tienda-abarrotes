@@ -49,7 +49,11 @@ router.get('/', authMiddleware, (req, res) => {
   const total = countResult.total;
 
   const products = db.prepare(
-    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name
+    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name,
+            (SELECT GROUP_CONCAT(ps.supplier_id) FROM product_suppliers ps WHERE ps.product_id = p.id) as supplier_ids,
+            (SELECT GROUP_CONCAT(s2.name, ' · ') FROM product_suppliers ps2
+               JOIN suppliers s2 ON s2.id = ps2.supplier_id WHERE ps2.product_id = p.id) as supplier_names,
+            (SELECT COUNT(*) FROM product_suppliers ps3 WHERE ps3.product_id = p.id) as supplier_count
      FROM products p
      LEFT JOIN categories c ON p.category_id = c.id
      ${where}
@@ -62,11 +66,22 @@ router.get('/', authMiddleware, (req, res) => {
 
 router.get('/all', authMiddleware, (req, res) => {
   const db = getDB();
+  // supplier_ids / supplier_names traen TODOS los proveedores del producto, no
+  // solo el habitual: Compras filtra por ellos para saber qué le puede pedir a
+  // cada proveedor sin tener que consultar producto por producto.
   const products = db.prepare(
-    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name 
-     FROM products p 
-     LEFT JOIN categories c ON p.category_id = c.id 
-     WHERE p.active = 1 
+    `SELECT p.*, COALESCE(c.name, p.category_name) as category_name,
+            (SELECT GROUP_CONCAT(ps.supplier_id) FROM product_suppliers ps WHERE ps.product_id = p.id) as supplier_ids,
+            (SELECT GROUP_CONCAT(s2.name, ' · ') FROM product_suppliers ps2
+               JOIN suppliers s2 ON s2.id = ps2.supplier_id WHERE ps2.product_id = p.id) as supplier_names,
+            -- "idProveedor:costo" por vínculo. Compras lo necesita para que al
+            -- teclear un código el renglón salga ya con el costo de ESE
+            -- proveedor, sin una consulta por producto.
+            (SELECT GROUP_CONCAT(ps4.supplier_id || ':' || COALESCE(ps4.purchase_price, ''))
+               FROM product_suppliers ps4 WHERE ps4.product_id = p.id) as supplier_prices
+     FROM products p
+     LEFT JOIN categories c ON p.category_id = c.id
+     WHERE p.active = 1
      ORDER BY p.name ASC`
   ).all();
   res.json({ products });
@@ -135,6 +150,133 @@ router.delete('/barcodes/:barcodeId', authMiddleware, inventoryAdminMiddleware, 
   const existing = db.prepare('SELECT id FROM product_barcodes WHERE id = ?').get(req.params.barcodeId);
   if (!existing) return res.status(404).json({ error: 'Código no encontrado' });
   db.prepare('DELETE FROM product_barcodes WHERE id = ?').run(req.params.barcodeId);
+  res.json({ success: true });
+});
+
+// ---------------------------------------------------------------
+// PROVEEDORES DE UN PRODUCTO (varios por producto)
+//
+// El mismo refresco se le puede comprar a dos distribuidores, cada uno con su
+// precio. products.supplier_id se conserva como "proveedor habitual" (el que
+// tiene is_preferred = 1) para que todo lo que ya dependía de ese campo siga
+// funcionando igual.
+//
+// Ojo con el orden: estas rutas van ANTES de router.delete('/:id'), o
+// "/suppliers/8" se interpretaría como borrar el producto "suppliers".
+// ---------------------------------------------------------------
+
+// Deja un solo vínculo marcado como habitual y refleja ese proveedor en
+// products.supplier_id, que es lo que leen el POS, el importador y Compras.
+function setPreferredSupplier(db, productId, linkId) {
+  db.prepare('UPDATE product_suppliers SET is_preferred = 0 WHERE product_id = ?').run(productId);
+  if (linkId) db.prepare('UPDATE product_suppliers SET is_preferred = 1 WHERE id = ?').run(linkId);
+  const preferred = db.prepare(
+    'SELECT supplier_id FROM product_suppliers WHERE product_id = ? AND is_preferred = 1'
+  ).get(productId);
+  db.prepare('UPDATE products SET supplier_id = ? WHERE id = ?')
+    .run(preferred ? preferred.supplier_id : null, productId);
+}
+
+// Asignar el "proveedor habitual" desde cualquier sitio (alta de producto,
+// edición, edición masiva, importación) debe crear también el vínculo en
+// product_suppliers: si no, el producto tendría proveedor en un campo pero no
+// en la tabla, y Compras no lo encontraría al pedirle a ese proveedor.
+function ensurePreferredLink(db, productId, supplierId, purchasePrice) {
+  if (!supplierId) return;
+  const link = db.prepare('SELECT id FROM product_suppliers WHERE product_id = ? AND supplier_id = ?')
+    .get(productId, supplierId);
+  if (link) {
+    setPreferredSupplier(db, productId, link.id);
+    return;
+  }
+  const result = db.prepare(
+    'INSERT INTO product_suppliers (product_id, supplier_id, purchase_price, is_preferred) VALUES (?, ?, ?, 0)'
+  ).run(productId, supplierId, purchasePrice != null && purchasePrice !== '' ? parseFloat(purchasePrice) : null);
+  setPreferredSupplier(db, productId, result.lastInsertRowid);
+}
+
+router.get('/:id/suppliers', authMiddleware, (req, res) => {
+  const db = getDB();
+  const suppliers = db.prepare(
+    `SELECT ps.*, s.name as supplier_name, s.contact, s.phone
+     FROM product_suppliers ps
+     JOIN suppliers s ON s.id = ps.supplier_id
+     WHERE ps.product_id = ?
+     ORDER BY ps.is_preferred DESC, s.name ASC`
+  ).all(req.params.id);
+  res.json({ suppliers });
+});
+
+router.post('/:id/suppliers', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  const { supplier_id, purchase_price, supplier_sku, notes, is_preferred } = req.body;
+  if (!supplier_id) return res.status(400).json({ error: 'Proveedor requerido' });
+
+  const product = db.prepare('SELECT id FROM products WHERE id = ?').get(req.params.id);
+  if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+  const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(supplier_id);
+  if (!supplier) return res.status(404).json({ error: 'Proveedor no encontrado' });
+
+  const yaEsta = db.prepare('SELECT id FROM product_suppliers WHERE product_id = ? AND supplier_id = ?')
+    .get(req.params.id, supplier_id);
+  if (yaEsta) return res.status(400).json({ error: 'Ese proveedor ya está ligado a este producto' });
+
+  // El primer proveedor que se liga queda como habitual sin tener que pedirlo:
+  // en el 90% de los casos hay uno solo y no debería costar un clic extra.
+  const esPrimero = !db.prepare('SELECT id FROM product_suppliers WHERE product_id = ?').get(req.params.id);
+
+  const result = db.prepare(
+    `INSERT INTO product_suppliers (product_id, supplier_id, purchase_price, supplier_sku, notes, is_preferred)
+     VALUES (?, ?, ?, ?, ?, 0)`
+  ).run(req.params.id, supplier_id,
+    purchase_price != null && purchase_price !== '' ? parseFloat(purchase_price) : null,
+    supplier_sku || null, notes || null);
+
+  if (is_preferred || esPrimero) setPreferredSupplier(db, req.params.id, result.lastInsertRowid);
+
+  const created = db.prepare(
+    `SELECT ps.*, s.name as supplier_name FROM product_suppliers ps
+     JOIN suppliers s ON s.id = ps.supplier_id WHERE ps.id = ?`
+  ).get(result.lastInsertRowid);
+  res.status(201).json(created);
+});
+
+router.put('/suppliers/:linkId', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  const link = db.prepare('SELECT * FROM product_suppliers WHERE id = ?').get(req.params.linkId);
+  if (!link) return res.status(404).json({ error: 'Vínculo no encontrado' });
+
+  const { purchase_price, supplier_sku, notes, is_preferred } = req.body;
+  if (purchase_price !== undefined) {
+    db.prepare('UPDATE product_suppliers SET purchase_price = ? WHERE id = ?')
+      .run(purchase_price === '' || purchase_price === null ? null : parseFloat(purchase_price), link.id);
+  }
+  if (supplier_sku !== undefined) db.prepare('UPDATE product_suppliers SET supplier_sku = ? WHERE id = ?').run(supplier_sku || null, link.id);
+  if (notes !== undefined) db.prepare('UPDATE product_suppliers SET notes = ? WHERE id = ?').run(notes || null, link.id);
+  if (is_preferred) setPreferredSupplier(db, link.product_id, link.id);
+
+  const updated = db.prepare(
+    `SELECT ps.*, s.name as supplier_name FROM product_suppliers ps
+     JOIN suppliers s ON s.id = ps.supplier_id WHERE ps.id = ?`
+  ).get(link.id);
+  res.json(updated);
+});
+
+router.delete('/suppliers/:linkId', authMiddleware, inventoryAdminMiddleware, (req, res) => {
+  const db = getDB();
+  const link = db.prepare('SELECT * FROM product_suppliers WHERE id = ?').get(req.params.linkId);
+  if (!link) return res.status(404).json({ error: 'Vínculo no encontrado' });
+
+  db.prepare('DELETE FROM product_suppliers WHERE id = ?').run(link.id);
+  // Si se quitó el habitual, otro toma el relevo en vez de dejar el producto
+  // sin proveedor: se elige el que quede con el costo más bajo.
+  if (link.is_preferred) {
+    const siguiente = db.prepare(
+      `SELECT id FROM product_suppliers WHERE product_id = ?
+       ORDER BY CASE WHEN purchase_price IS NULL THEN 1 ELSE 0 END, purchase_price ASC, id ASC LIMIT 1`
+    ).get(link.product_id);
+    setPreferredSupplier(db, link.product_id, siguiente ? siguiente.id : null);
+  }
   res.json({ success: true });
 });
 
@@ -242,6 +384,8 @@ router.post('/', authMiddleware, inventoryAdminMiddleware, (req, res) => {
       ).run(productId, 'in', stock || 0, stock || 0, 'initial', 'Inventario inicial', req.user.id);
     }
 
+    ensurePreferredLink(db, productId, supplier_id, purchase_price);
+
     const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
     if (!product) return res.status(500).json({ error: 'Error al recuperar el producto' });
     res.status(201).json(product);
@@ -315,6 +459,7 @@ router.put('/bulk', authMiddleware, inventoryAdminMiddleware, (req, res) => {
         if (supplierName !== undefined) {
           sets.push('supplier_id = ?', 'supplier = ?');
           params.push(changes.supplier_id, supplierName);
+          ensurePreferredLink(db, id, changes.supplier_id, p.purchase_price);
         }
         if (changes.unit_type && ['unit', 'kg', 'l'].includes(changes.unit_type)) {
           sets.push('unit_type = ?');
@@ -452,6 +597,14 @@ router.put('/:id', authMiddleware, inventoryAdminMiddleware, (req, res) => {
     finalSellableIndividually ? (individual_price !== undefined ? individual_price : existing.individual_price) : null,
     req.params.id
   );
+
+  // Cambiar el proveedor habitual desde la ficha del producto también crea o
+  // marca su vínculo. Los demás proveedores ligados se conservan: aquí solo se
+  // dice cuál es el de cabecera, no se borra a nadie.
+  if (supplier_id !== undefined && finalSupplierId) {
+    ensurePreferredLink(db, Number(req.params.id), finalSupplierId,
+      purchase_price !== undefined ? purchase_price : existing.purchase_price);
+  }
 
   if (stock !== undefined && stock !== existing.stock) {
     const diff = stock - existing.stock;

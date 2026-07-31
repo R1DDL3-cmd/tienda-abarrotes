@@ -5,6 +5,12 @@ import { getTheme, toggleTheme } from '../theme'
 import { modalKeys } from '../modalKeys'
 import { confirmDialog } from '../confirmDialog'
 import { barcodeSVG } from '../barcode'
+import { useKeyboardLayer } from '../keyboard/input.js'
+import { useActiveIndex } from '../keyboard/useActiveIndex.js'
+import { STATES, actionsFor } from '../keyboard/registry.js'
+import { keyLabel } from '../keyboard/keys.js'
+import HelpBar from './HelpBar'
+import KeyHelpSheet from './KeyHelpSheet'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -39,7 +45,13 @@ export default function Inventory({ user, onLogout }) {
   const [batchProduct, setBatchProduct] = useState(null)
   const [batches, setBatches] = useState([])
   const [batchForm, setBatchForm] = useState({ batch_code: '', quantity: '', expiry_date: '' })
+  // --- Capa de teclado (ver frontend/src/keyboard/) ---
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
+  const searchRef = useRef(null)
   const [barcodeProduct, setBarcodeProduct] = useState(null)
+  const [supplierProduct, setSupplierProduct] = useState(null)
+  const [productSuppliers, setProductSuppliers] = useState([])
+  const [newLink, setNewLink] = useState({ supplier_id: '', purchase_price: '', supplier_sku: '' })
   const [productBarcodes, setProductBarcodes] = useState([])
   const [newBarcode, setNewBarcode] = useState('')
   const [showWasteModal, setShowWasteModal] = useState(false)
@@ -404,6 +416,59 @@ export default function Inventory({ user, onLogout }) {
     } catch (e) { setError(e.message) }
   }
 
+  // ---------------------------------------------------------------
+  // PROVEEDORES DE UN PRODUCTO (varios por producto)
+  //
+  // El mismo producto se le puede comprar a más de un proveedor, cada uno con
+  // su costo. Uno de ellos es el "habitual": el que se usa por defecto al
+  // sugerir pedidos y el que aparece en la columna Proveedor.
+  // ---------------------------------------------------------------
+  const recargarProveedores = async (productId) => {
+    const res = await products.suppliers(productId)
+    setProductSuppliers(res.suppliers)
+  }
+
+  const openProductSuppliers = async (p) => {
+    setSupplierProduct(p)
+    setNewLink({ supplier_id: '', purchase_price: '', supplier_sku: '' })
+    try { await recargarProveedores(p.id) } catch (e) { setError(e.message) }
+  }
+
+  const handleAddLink = async () => {
+    if (!newLink.supplier_id) { setError('Elige un proveedor'); return }
+    try {
+      await products.addSupplier(supplierProduct.id, {
+        supplier_id: parseInt(newLink.supplier_id),
+        purchase_price: newLink.purchase_price === '' ? null : parseFloat(newLink.purchase_price),
+        supplier_sku: newLink.supplier_sku || null,
+      })
+      setNewLink({ supplier_id: '', purchase_price: '', supplier_sku: '' })
+      await recargarProveedores(supplierProduct.id)
+      loadProducts()
+      setSuccess('Proveedor ligado')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
+  }
+
+  const handleLinkChange = async (link, patch) => {
+    try {
+      await products.updateSupplierLink(link.id, patch)
+      await recargarProveedores(supplierProduct.id)
+      if (patch.is_preferred) loadProducts()
+    } catch (e) { setError(e.message) }
+  }
+
+  const handleRemoveLink = async (link) => {
+    if (!(await confirmDialog(`Quitar a ${link.supplier_name} de este producto?`))) return
+    try {
+      await products.removeSupplierLink(link.id)
+      await recargarProveedores(supplierProduct.id)
+      loadProducts()
+      setSuccess('Proveedor desligado')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (e) { setError(e.message) }
+  }
+
   const openObsoleteModal = async () => {
     setShowObsoleteModal(true)
     setSelectedObsolete(new Set())
@@ -555,6 +620,74 @@ export default function Inventory({ user, onLogout }) {
     } catch (e) { setError(e.message) }
   }
 
+  // ============================================================
+  // CAPA DE TECLADO
+  // Las teclas NO se escriben aquí: salen del registro. Este componente solo
+  // aporta el comportamiento, igual que el POS y Compras.
+  // ============================================================
+  const anyModal = !!(showForm || kardexProduct || showLabelsModal || batchProduct || barcodeProduct ||
+    supplierProduct || showWasteModal || showWasteList || showCategoriesModal || showObsoleteModal ||
+    showBulkModal || importPending || showKeyboardHelp)
+
+  // El índice vive en estado (para pintar) y en un ref (para decidir en el
+  // acto): tres teclas seguidas llegan antes de que React vuelva a renderizar.
+  const fila = useActiveIndex(productList.length)
+  const activeRow = fila.index
+  const setActiveRow = fila.setIndex
+  const productoActivo = () => productList[fila.current()] || null
+  const activo = productList[Math.min(activeRow, Math.max(0, productList.length - 1))] || null
+
+  // La fila activa siempre visible: navegar con ↑↓ no debe dejarla fuera de pantalla.
+  useEffect(() => {
+    const el = document.querySelector('.products-section tr.row-active')
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' })
+  }, [activeRow, productList])
+
+  useEffect(() => { setActiveRow(0) }, [page, search, filterCat, showLowStock])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const keyHandlers = {
+    sys_help: () => setShowKeyboardHelp(true),
+    inv_search: () => searchRef.current?.focus(),
+    inv_supplier: () => { const p = productoActivo(); if (p) openProductSuppliers(p) },
+    inv_edit: () => { const p = productoActivo(); if (p) openEdit(p) },
+    inv_bulk: () => {
+      if (selectedIds.size === 0) { setError('Marca productos con Espacio para editarlos en lote'); return }
+      setBulkForm(emptyBulk())
+      setShowBulkModal(true)
+    },
+    inv_kardex: () => { const p = productoActivo(); if (p) openKardex(p) },
+    inv_new: () => openNew(),
+    inv_mark: () => { const p = productoActivo(); if (p) toggleSelect(p.id) },
+    inv_labels: () => openLabelsModal(),
+    inv_delete: () => { const p = productoActivo(); if (p) handleDelete(p.id) },
+    inv_row_prev: () => fila.move(-1),
+    inv_row_next: () => fila.move(1),
+    inv_page_prev: () => setPage(p => Math.max(1, p - 1)),
+    inv_page_next: () => setPage(p => Math.min(totalPages, p + 1)),
+  }
+
+  useKeyboardLayer({
+    state: anyModal ? STATES.MODAL : STATES.INVENTARIO,
+    role: user?.role,
+    handlers: keyHandlers,
+    commandLineRef: searchRef,
+    isCommandLineEmpty: () => !search,
+  })
+
+  // Enter avanza (edita el producto activo), Esc retrocede (limpia la búsqueda).
+  useEffect(() => {
+    if (anyModal) return
+    const onKey = (e) => {
+      if (e.defaultPrevented) return
+      const enInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)
+      const p = productoActivo()
+      if (e.key === 'Enter' && p) { e.preventDefault(); openEdit(p) }
+      else if (e.key === 'Escape' && (search || !enInput)) { e.preventDefault(); setSearch(''); searchRef.current?.focus() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [anyModal, activo, search])
+
   return (
     <div className="inventory-page">
       <div className="page-header">
@@ -597,7 +730,7 @@ export default function Inventory({ user, onLogout }) {
           <h3 style={{margin:0}}>Productos</h3>
         </div>
         <div className="filters">
-            <input type="text" className="input" placeholder="Buscar por nombre o código..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
+            <input ref={searchRef} type="text" className="input" placeholder="Buscar por nombre o código... (F2)" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
             <select value={filterCat} onChange={(e) => { setFilterCat(e.target.value); setPage(1) }}>
               <option value="">Todas las categorías</option>
               {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -635,8 +768,10 @@ export default function Inventory({ user, onLogout }) {
                 </tr>
               </thead>
               <tbody>
-                {productList.map(p => (
-                  <tr key={p.id} className={`${p.stock <= p.min_stock ? 'row-warning' : ''} ${selectedIds.has(p.id) ? 'row-selected' : ''}`}>
+                {productList.map((p, idx) => (
+                  <tr key={p.id}
+                      className={`${p.stock <= p.min_stock ? 'row-warning' : ''} ${selectedIds.has(p.id) ? 'row-selected' : ''} ${idx === Math.min(activeRow, productList.length - 1) ? 'row-active' : ''}`}
+                      onClick={() => setActiveRow(idx)}>
                     <td style={{textAlign:'center'}}>
                       <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelect(p.id)} />
                     </td>
@@ -654,12 +789,18 @@ export default function Inventory({ user, onLogout }) {
                     <td>{formatMoney(p.sale_price)}</td>
                     <td className={p.stock <= p.min_stock ? 'text-danger' : ''}>{p.stock} {p.unit_type === 'kg' ? 'kg' : p.unit_type === 'l' ? 'L' : ''}</td>
                     <td>{p.min_stock}</td>
-                    <td>{p.supplier || '-'}</td>
+                    <td title={p.supplier_names || ''}>
+                      {p.supplier_names || p.supplier || '-'}
+                      {p.supplier_count > 1 && (
+                        <span className="badge badge-secondary" style={{marginLeft:'0.3rem'}}>{p.supplier_count}</span>
+                      )}
+                    </td>
                     <td>{p.unit_type === 'kg' ? 'Peso' : p.unit_type === 'l' ? 'Vol' : 'Unidad'}</td>
                     <td className="actions-cell">
                       <button className="btn btn-sm btn-outline" onClick={() => openKardex(p)}>Kardex</button>
                       <button className="btn btn-sm btn-outline" onClick={() => openBatches(p)}>Lotes</button>
                       <button className="btn btn-sm btn-outline" onClick={() => openBarcodes(p)}>Códigos</button>
+                      <button className="btn btn-sm btn-outline" onClick={() => openProductSuppliers(p)}>Proveedores</button>
                       <button className="btn btn-sm btn-outline" onClick={() => openWasteModal(p)}>Merma</button>
                       <button className="btn btn-sm btn-outline" onClick={() => openEdit(p)}>Editar</button>
                       <button className="btn btn-sm btn-danger" onClick={() => handleDelete(p.id)}>X</button>
@@ -716,11 +857,14 @@ export default function Inventory({ user, onLogout }) {
                 <input type="number" step="0.5" value={form.min_stock} onChange={e => setForm({...form, min_stock: e.target.value})} />
               </div>
               <div className="form-group">
-                <label>Proveedor</label>
+                <label>Proveedor habitual</label>
                 <select value={form.supplier_id} onChange={e => setForm({...form, supplier_id: e.target.value})}>
                   <option value="">Sin proveedor</option>
                   {supplierList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
+                {editingProduct && (
+                  <small className="text-muted">Para comprarlo a varios, usa el botón Proveedores de la lista.</small>
+                )}
               </div>
               <div className="form-group">
                 <label>Tipo de Venta</label>
@@ -1073,6 +1217,86 @@ export default function Inventory({ user, onLogout }) {
         </div>
       )}
 
+      {supplierProduct && (
+        <div className="modal-overlay" onClick={() => setSupplierProduct(null)} onKeyDown={modalKeys(() => { setSupplierProduct(null); setError('') }, null)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <h3>Proveedores de: {supplierProduct.name}</h3>
+            <p className="text-muted">
+              El mismo producto se le puede comprar a varios proveedores. Cada uno guarda
+              su propio costo, que es justo lo que permite comparar a quién conviene pedirle.
+              El <strong>habitual</strong> es el que se usa al sugerir pedidos.
+            </p>
+
+            <div className="table-responsive">
+              <table className="table">
+                <thead>
+                  <tr><th>Proveedor</th><th>Costo</th><th>Clave del proveedor</th><th>Habitual</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {productSuppliers.map(link => (
+                    <tr key={link.id} className={link.is_preferred ? 'row-selected' : ''}>
+                      <td><strong>{link.supplier_name}</strong>{link.phone && <div className="text-muted" style={{fontSize:'0.78rem'}}>{link.phone}</div>}</td>
+                      <td>
+                        <input
+                          type="number" step="0.01" min="0" className="price-input"
+                          defaultValue={link.purchase_price ?? ''}
+                          onBlur={e => {
+                            const v = e.target.value
+                            if (String(link.purchase_price ?? '') !== v) handleLinkChange(link, { purchase_price: v })
+                          }}
+                          onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text" className="input" defaultValue={link.supplier_sku || ''}
+                          placeholder="opcional"
+                          onBlur={e => {
+                            if ((link.supplier_sku || '') !== e.target.value) handleLinkChange(link, { supplier_sku: e.target.value })
+                          }}
+                          onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                        />
+                      </td>
+                      <td style={{textAlign:'center'}}>
+                        {link.is_preferred
+                          ? <span className="badge badge-success">Habitual</span>
+                          : <button className="btn btn-sm btn-outline" onClick={() => handleLinkChange(link, { is_preferred: true })}>Marcar</button>}
+                      </td>
+                      <td><button className="btn btn-sm btn-danger" onClick={() => handleRemoveLink(link)}>X</button></td>
+                    </tr>
+                  ))}
+                  {productSuppliers.length === 0 && (
+                    <tr><td colSpan="5" className="text-center text-muted">Este producto no tiene proveedores ligados</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <h4 style={{marginTop:'0.75rem'}}>Ligar otro proveedor</h4>
+            <div className="filters">
+              <select className="input" value={newLink.supplier_id} onChange={e => setNewLink({...newLink, supplier_id: e.target.value})} autoFocus>
+                <option value="">Elige un proveedor...</option>
+                {supplierList
+                  .filter(s => !productSuppliers.some(l => l.supplier_id === s.id))
+                  .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <input type="number" step="0.01" min="0" className="input" placeholder="Costo con este proveedor"
+                value={newLink.purchase_price} onChange={e => setNewLink({...newLink, purchase_price: e.target.value})}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddLink() }} />
+              <input type="text" className="input" placeholder="Clave del proveedor (opcional)"
+                value={newLink.supplier_sku} onChange={e => setNewLink({...newLink, supplier_sku: e.target.value})}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddLink() }} />
+              <button className="btn btn-primary" onClick={handleAddLink}>Ligar</button>
+            </div>
+
+            {error && <div className="alert alert-error" style={{marginTop:'0.5rem'}}>{error}</div>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => { setSupplierProduct(null); setError('') }}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showObsoleteModal && (
         <div className="modal-overlay" onClick={() => setShowObsoleteModal(false)} onKeyDown={modalKeys(() => setShowObsoleteModal(false), null)}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
@@ -1233,6 +1457,14 @@ export default function Inventory({ user, onLogout }) {
           </div>
         </div>
       )}
+
+      {showKeyboardHelp && (
+        <KeyHelpSheet state={STATES.INVENTARIO} role={user?.role} titulo="Teclas de Inventario"
+          onClose={() => setShowKeyboardHelp(false)} />
+      )}
+
+      <HelpBar state={anyModal ? STATES.MODAL : STATES.INVENTARIO} role={user?.role}
+        extra={selectedIds.size > 0 ? <span className="help-key"><strong>{selectedIds.size}</strong> marcado(s)</span> : null} />
     </div>
   )
 }

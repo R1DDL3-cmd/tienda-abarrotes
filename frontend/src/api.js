@@ -121,6 +121,11 @@ export const products = {
   batches: (productId) => request(`/products/batches/${productId}`),
   addBatch: (productId, data) => request(`/products/batches/${productId}`, { method: 'POST', body: JSON.stringify(data) }),
   deleteBatch: (batchId) => request(`/products/batches/${batchId}`, { method: 'DELETE' }),
+  // Un producto puede comprarse a varios proveedores, cada uno con su costo.
+  suppliers: (productId) => request(`/products/${productId}/suppliers`),
+  addSupplier: (productId, data) => request(`/products/${productId}/suppliers`, { method: 'POST', body: JSON.stringify(data) }),
+  updateSupplierLink: (linkId, data) => request(`/products/suppliers/${linkId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  removeSupplierLink: (linkId) => request(`/products/suppliers/${linkId}`, { method: 'DELETE' }),
   barcodes: (productId) => request(`/products/${productId}/barcodes`),
   priceHistory: (productId) => request(`/products/${productId}/price-history`),
   addBarcode: (productId, barcode) => request(`/products/${productId}/barcodes`, { method: 'POST', body: JSON.stringify({ barcode }) }),

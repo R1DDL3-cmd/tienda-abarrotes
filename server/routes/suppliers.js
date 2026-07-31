@@ -161,9 +161,17 @@ router.get('/suppliers/:id/suggested-order', (req, res) => {
     const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(req.params.id);
     if (!supplier) return res.status(404).json({ error: 'Proveedor no encontrado' });
 
+    // Un producto puede estar ligado a varios proveedores (product_suppliers).
+    // Se sugiere lo de ESTE proveedor, y con SU precio: el mismo producto
+    // cuesta distinto según a quién se le compre, y el pedido debe salir con
+    // el costo del proveedor al que se le está pidiendo.
     const supplierProducts = db.prepare(
-      `SELECT id, name, barcode, stock, min_stock, purchase_price FROM products WHERE active = 1 AND supplier_id = ?`
-    ).all(req.params.id);
+      `SELECT p.id, p.name, p.barcode, p.stock, p.min_stock,
+              COALESCE(ps.purchase_price, p.purchase_price) as purchase_price
+       FROM products p
+       LEFT JOIN product_suppliers ps ON ps.product_id = p.id AND ps.supplier_id = ?
+       WHERE p.active = 1 AND (ps.id IS NOT NULL OR p.supplier_id = ?)`
+    ).all(req.params.id, req.params.id);
     const productIds = new Set(supplierProducts.map(p => p.id));
 
     const predictions = predictAll(db);
@@ -359,6 +367,26 @@ router.put('/purchases/:id/receive', (req, res) => {
               source: `recepción de compra #${purchase.id}`, user: req.user,
             });
             db.run('UPDATE products SET purchase_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [receivedPrice, item.product_id]);
+          }
+
+          // El costo también se guarda POR PROVEEDOR: es el dato que permite
+          // comparar a quién conviene pedirle. Si el producto todavía no
+          // estaba ligado a este proveedor, se liga ahora — acabas de
+          // comprárselo, así que el vínculo es un hecho, no una suposición.
+          if (receivedPrice > 0) {
+            const link = db.prepare('SELECT id FROM product_suppliers WHERE product_id = ? AND supplier_id = ?')
+              .get(item.product_id, purchase.supplier_id);
+            if (link) {
+              db.run('UPDATE product_suppliers SET purchase_price = ? WHERE id = ?', [receivedPrice, link.id]);
+            } else {
+              const esPrimero = !db.prepare('SELECT id FROM product_suppliers WHERE product_id = ?').get(item.product_id);
+              db.run(
+                `INSERT OR IGNORE INTO product_suppliers (product_id, supplier_id, purchase_price, is_preferred)
+                 VALUES (?, ?, ?, ?)`,
+                [item.product_id, purchase.supplier_id, receivedPrice, esPrimero ? 1 : 0]
+              );
+              if (esPrimero) db.run('UPDATE products SET supplier_id = ? WHERE id = ?', [purchase.supplier_id, item.product_id]);
+            }
           }
         }
       });

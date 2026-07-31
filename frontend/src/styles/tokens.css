@@ -1,0 +1,240 @@
+/* ============================================================================
+   TOKENS — única fuente de verdad de color, espaciado, tipografía y densidad.
+   Ningún componente define un color, un radio o una altura a mano: todo sale
+   de aquí, y por eso el sistema puede cambiar de estética entera con un
+   atributo en <html>.
+
+   Dos ejes independientes:
+     data-skin  = "moderno" (por defecto) | "enterprise"
+     data-theme = "light" (por defecto)   | "dark"
+
+   Las cuatro combinaciones son válidas. La estética se elige con el botón de
+   la barra superior (ver theme.js); el tema claro/oscuro sigue siendo el que
+   ya existía.
+   ============================================================================ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ESTÉTICA "MODERNO" — la que el sistema ha tenido siempre. Se conserva
+   intacta: cambiar de estética nunca debe sentirse como perder la anterior.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* --- Marca y estados --- */
+  --primary: #2563eb;
+  --primary-light: #3b82f6;
+  --primary-dark: #1d4ed8;
+  --success: #16a34a;
+  --success-light: #22c55e;
+  --success-dark: #15803d;
+  --danger: #dc2626;
+  --danger-light: #ef4444;
+  --danger-dark: #b91c1c;
+  --warning: #f59e0b;
+  --warning-dark: #d97706;
+
+  /* --- Superficies --- */
+  --bg: #f1f5f9;
+  --bg-card: #ffffff;
+  --bg-hover: #f8fafc;
+  --bg-accent: #f0f7ff;
+  --input-bg: #ffffff;
+  --header-bg: #1e293b;
+  --header-text: #ffffff;
+
+  /* --- Texto y líneas --- */
+  --text: #1e293b;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+  --border: #e2e8f0;
+  --border-light: #f1f5f9;
+  --border-w: 1.5px;
+
+  /* --- Geometría --- */
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+  --shadow-lg: 0 10px 25px rgba(0,0,0,0.1), 0 4px 10px rgba(0,0,0,0.06);
+
+  /* --- Tipografía --- */
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  --font-mono: 'Consolas', 'Courier New', monospace;
+  --font-size-base: 14px;
+
+  /* --- Densidad: alto de controles y celdas --- */
+  --control-h: 38px;
+  --control-h-sm: 30px;
+  --control-h-lg: 46px;
+  --input-pad-y: 0.6rem;
+  --input-pad-x: 0.8rem;
+  --cell-y: 0.45rem;
+  --cell-x: 0.7rem;
+  --panel-pad: 1rem;
+  --gap: 1rem;
+
+  /* --- Escala de dinero (ver .money-* en app.css) ---
+     Los importes son lo único que un cajero mira de reojo desde un metro de
+     distancia mientras cuenta billetes: van en su propia escala, muy por
+     encima del texto normal, y siempre con cifras de ancho fijo. */
+  --money-line: 1.05rem;   /* precio y subtotal de cada renglón del ticket */
+  --money-sub: 1.5rem;     /* subtotales y montos de los modales */
+  --money-pay: 2.4rem;     /* pantalla de cobro: lo que paga y lo que falta */
+  --money-total: clamp(2.2rem, 4.6vw, 3.4rem);  /* TOTAL del ticket */
+  --money-hero: clamp(3.5rem, 13vw, 8rem);      /* CAMBIO a devolver */
+
+  /* --- Movimiento --- */
+  --transition: 0.15s;
+  --transition-slow: 0.2s;
+
+  color-scheme: light;
+}
+
+/* --- Moderno + oscuro --- */
+:root[data-theme="dark"] {
+  --primary: #3b82f6;
+  --primary-light: #60a5fa;
+  --primary-dark: #2563eb;
+  --success: #22c55e;
+  --success-light: #4ade80;
+  --success-dark: #16a34a;
+  --danger: #f87171;
+  --danger-light: #fca5a5;
+  --danger-dark: #ef4444;
+  --warning: #fbbf24;
+  --warning-dark: #f59e0b;
+  --bg: #0f172a;
+  --bg-card: #1e293b;
+  --bg-hover: #26334a;
+  --bg-accent: rgba(59,130,246,0.15);
+  --input-bg: #17223a;
+  --text: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --border: #334155;
+  --border-light: #293548;
+  --header-bg: #0a0f1d;
+  --header-text: #e2e8f0;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow: 0 1px 3px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.3);
+  --shadow-lg: 0 10px 25px rgba(0,0,0,0.45), 0 4px 10px rgba(0,0,0,0.3);
+
+  color-scheme: dark;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ESTÉTICA "ENTERPRISE CLASSIC" — herramienta de trabajo de 8 horas.
+   Cada valor de aquí responde a productividad, no a estilo:
+
+   · Paleta neutra: el color solo aparece cuando SIGNIFICA algo (azul =
+     acción, verde = éxito, naranja = advertencia, rojo = error). Una pantalla
+     sin color es una pantalla sin nada urgente.
+   · Radio 0 y sin sombras: los bordes rectos permiten pegar paneles sin
+     espacio muerto y hacen que las líneas de 1px separen sin decorar.
+   · Densidad alta (13px, controles de 26px, celdas de 3px): en una tabla
+     caben ~24 renglones en vez de ~12; menos scroll = menos tiempo.
+   · Sin transiciones: la interfaz responde en el mismo fotograma del clic.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root[data-skin="enterprise"] {
+  /* --- Marca y estados: tonos sobrios, contraste alto sobre gris --- */
+  --primary: #0a5fb4;
+  --primary-light: #1673d2;
+  --primary-dark: #084c90;
+  --success: #107c10;
+  --success-light: #16a016;
+  --success-dark: #0b5d0b;
+  --danger: #c42b1c;
+  --danger-light: #d13c2d;
+  --danger-dark: #9b2016;
+  --warning: #9d5d00;
+  --warning-dark: #7a4800;
+
+  /* --- Superficies: gris de aplicación, blanco solo donde hay datos --- */
+  --bg: #f0f0f0;
+  --bg-card: #ffffff;
+  --bg-hover: #e9e9e9;
+  --bg-accent: #cce4f7;      /* selección azul clásica de Windows */
+  --input-bg: #ffffff;
+  --header-bg: #e4e4e4;      /* barra de menú gris, texto oscuro (MMC/SSMS) */
+  --header-text: #1a1a1a;
+
+  /* --- Texto y líneas --- */
+  --text: #101010;
+  --text-secondary: #383838;
+  --text-muted: #6b6b6b;
+  --border: #a0a0a0;
+  --border-light: #d4d4d4;
+  --border-w: 1px;
+
+  /* --- Geometría: todo recto, sin profundidad --- */
+  --radius: 0;
+  --radius-sm: 0;
+  --radius-lg: 0;
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+
+  /* --- Tipografía: una sola familia, jerarquía por tamaño y peso --- */
+  --font: 'Segoe UI', Inter, 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: Consolas, 'Courier New', monospace;
+  --font-size-base: 13px;
+
+  /* --- Densidad --- */
+  --control-h: 26px;
+  --control-h-sm: 22px;
+  --control-h-lg: 32px;
+  --input-pad-y: 0.2rem;
+  --input-pad-x: 0.4rem;
+  --cell-y: 0.2rem;
+  --cell-x: 0.45rem;
+  --panel-pad: 0.6rem;
+  --gap: 0.5rem;
+
+  /* --- Dinero: en la estética clásica sube todavía más. El total es el
+         único elemento de la pantalla al que se le permite gritar. --- */
+  --money-line: 1.1rem;
+  --money-sub: 1.55rem;
+  --money-pay: 2.6rem;
+  --money-total: clamp(2.4rem, 5vw, 3.6rem);
+  --money-hero: clamp(3.5rem, 13vw, 8rem);
+
+  /* --- Sin movimiento --- */
+  --transition: 0s;
+  --transition-slow: 0s;
+
+  color-scheme: light;
+}
+
+/* --- Enterprise + oscuro: gris carbón de las herramientas de desarrollo,
+       mismo contraste, mismas dimensiones. --- */
+:root[data-skin="enterprise"][data-theme="dark"] {
+  --primary: #3794d8;
+  --primary-light: #4aa3e4;
+  --primary-dark: #2a7cb8;
+  --success: #4ec94e;
+  --success-light: #6bd66b;
+  --success-dark: #35a635;
+  --danger: #f14c4c;
+  --danger-light: #f66a6a;
+  --danger-dark: #c73838;
+  --warning: #cca700;
+  --warning-dark: #a88a00;
+
+  --bg: #1e1e1e;
+  --bg-card: #252526;
+  --bg-hover: #2d2d30;
+  --bg-accent: #094771;       /* selección azul de VS/SSMS oscuro */
+  --input-bg: #1c1c1c;
+  --header-bg: #333333;
+  --header-text: #e6e6e6;
+
+  --text: #e6e6e6;
+  --text-secondary: #c8c8c8;
+  --text-muted: #9a9a9a;
+  --border: #3f3f46;
+  --border-light: #333338;
+
+  color-scheme: dark;
+}

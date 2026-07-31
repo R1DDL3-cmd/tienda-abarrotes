@@ -102,8 +102,10 @@ test('registro de acciones', async (t) => {
     // F4 y F12 cobran en captura
     assert.strictEqual(resolveKey('F4', { state: STATES.CAPTURA, role: 'admin' }).id, 'pos_charge');
     assert.strictEqual(resolveKey('F12', { state: STATES.CAPTURA, role: 'admin' }).id, 'pos_charge');
-    // La MISMA tecla significa otra cosa en cobro
-    assert.strictEqual(resolveKey('F1', { state: STATES.CAPTURA, role: 'admin' }).id, 'pos_help');
+    // La MISMA tecla significa otra cosa en cobro. La ayuda dejó de ser
+    // "del POS" (pos_help) al volverse universal en la Fase 2: ahora es
+    // sys_help y vale en cualquier sección.
+    assert.strictEqual(resolveKey('F1', { state: STATES.CAPTURA, role: 'admin' }).id, 'sys_help');
     assert.strictEqual(resolveKey('F1', { state: STATES.COBRO, role: 'admin' }).id, 'cobro_cash');
     // Una acción de captura no existe en cobro
     assert.strictEqual(resolveKey('F8', { state: STATES.COBRO, role: 'admin' }).id, 'cobro_d200');

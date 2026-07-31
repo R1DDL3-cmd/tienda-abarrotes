@@ -2,8 +2,14 @@ import React, { useState, useEffect, useRef } from 'react'
 import { auth, backup, settings as settingsApi, hardware } from '../api'
 import { imprimirTextoHtml } from '../ticketPrint'
 import { formatDate, formatDateTime } from '../dateUtils'
-import { getTheme, setTheme, applyPalette, clearPalette } from '../theme'
-import { getShortcuts, setShortcutKey, resetShortcuts, eventToKeyString, keyLabel, DEFAULT_SHORTCUTS } from '../shortcuts'
+import { getTheme, setTheme, applyPalette, clearPalette, getSkin, setSkin, SKINS } from '../theme'
+// La pantalla de Atajos ya no usa el puente shortcuts.js: se genera del
+// registro de acciones, que es la única fuente de verdad de las teclas.
+import { allActions, keysFor, setKeys, resetKeys, exportKeymap, importKeymap, STATES } from '../keyboard/registry.js'
+import { eventToKeyString, keyLabel, keyWarning } from '../keyboard/keys.js'
+import { useKeyboardLayer } from '../keyboard/input.js'
+import HelpBar from './HelpBar'
+import KeyHelpSheet from './KeyHelpSheet'
 import { modalKeys } from '../modalKeys'
 import { confirmDialog } from '../confirmDialog'
 import { getManualOffsetHours, setManualOffsetHours } from '../dateUtils'
@@ -31,8 +37,12 @@ export default function Settings({ user }) {
   const [storeForm, setStoreForm] = useState({ store_name: '', store_address: '', store_phone: '', ticket_footer: '', store_logo: '' })
   const logoInputRef = useRef(null)
   const [theme, setThemeState] = useState(getTheme())
-  const [shortcuts, setShortcutsState] = useState(getShortcuts())
+  const [skin, setSkinState] = useState(getSkin())
   const [capturingShortcut, setCapturingShortcut] = useState(null)
+  const [versionTeclas, setVersionTeclas] = useState(0)   // fuerza el repintado tras cambiar teclas
+  const [filtroTeclas, setFiltroTeclas] = useState('')
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
+  const importKeysRef = useRef(null)
   const [manualOffsetInput, setManualOffsetInput] = useState(String(getManualOffsetHours()))
   const [previewClock, setPreviewClock] = useState(new Date())
 
@@ -149,28 +159,70 @@ export default function Settings({ user }) {
     } catch (e) { setError(e.message) }
   }
 
-  // Captura la siguiente tecla presionada para remapear un atajo. Acepta
-  // CUALQUIER tecla (letras, números, Enter, Supr, Inicio, flechas, F1-F12,
-  // o combinaciones con Ctrl/Alt). Escape cancela la captura sin asignar nada.
+  // Captura la siguiente tecla presionada para remapear una acción del
+  // registro. Acepta CUALQUIER tecla (letras, números, Enter, Supr, Inicio,
+  // flechas, F1-F12, o combinaciones con Ctrl/Alt). Escape cancela.
   useEffect(() => {
     if (!capturingShortcut) return
     const onKeyDown = (e) => {
       e.preventDefault()
+      e.stopPropagation()
       if (e.key === 'Escape') { setCapturingShortcut(null); return }
       const key = eventToKeyString(e)
       if (!key) return // tecla modificadora sola: seguir esperando
-      setShortcutKey(capturingShortcut, key)
-      setShortcutsState(getShortcuts())
+      setKeys(capturingShortcut, [key])
+      setVersionTeclas(v => v + 1)
       setCapturingShortcut(null)
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [capturingShortcut])
 
   const handleResetShortcuts = () => {
-    resetShortcuts()
-    setShortcutsState(getShortcuts())
+    resetKeys()
+    setVersionTeclas(v => v + 1)
   }
+
+  // Perfil de teclas exportable: el dueño configura una caja y lleva el mismo
+  // teclado a las demás sin volver a tocarlo.
+  const exportarTeclas = () => {
+    const blob = new Blob([exportKeymap()], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `teclas_${new Date().toISOString().split('T')[0]}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importarTeclas = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        importKeymap(String(reader.result))
+        setVersionTeclas(v => v + 1)
+        setSuccess('Teclas importadas')
+      } catch (err) { setError('Archivo de teclas inválido: ' + err.message) }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  // Acciones agrupadas para la pantalla, filtrables por nombre.
+  const accionesPorGrupo = React.useMemo(() => {
+    const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    const q = norm(filtroTeclas)
+    return allActions()
+      .filter(a => !q || norm(a.nombre).includes(q) || norm(a.descripcion).includes(q) || norm(a.group).includes(q))
+      .reduce((acc, a) => {
+        const g = a.group || 'Otros'
+        acc[g] = acc[g] || []
+        acc[g].push(a)
+        return acc
+      }, {})
+  }, [filtroTeclas, versionTeclas])
 
   useEffect(() => {
     const id = setInterval(() => setPreviewClock(new Date()), 1000)
@@ -375,11 +427,46 @@ export default function Settings({ user }) {
     { id: 'backups', label: 'Respaldos' },
   ]
 
+  // ============================================================
+  // CAPA DE TECLADO — ← → cambian de pestaña, F4 guarda la que esté abierta
+  // ============================================================
+
+  const guardarPestanaActual = () => {
+    if (tab === 'store') handleSaveStore()
+    else if (tab === 'appearance') handleSavePalette()
+    else if (tab === 'printer') handleSavePrinter()
+    else if (tab === 'security') handleSaveSecurityPin()
+    else if (tab === 'password') handleChangePassword()
+    else if (tab === 'backups') handleSaveBackupPath()
+    else if (tab === 'time') handleSaveManualOffset()
+    else setError('Esta pestaña no tiene nada que guardar')
+  }
+
+  useKeyboardLayer({
+    // Mientras se captura una tecla nueva, la capa se apaga: si no, la tecla
+    // que el usuario está asignando ejecutaría su acción al pulsarla.
+    enabled: !capturingShortcut,
+    state: showKeyboardHelp ? STATES.MODAL : STATES.CONFIGURACION,
+    role: user?.role,
+    handlers: {
+      sys_help: () => setShowKeyboardHelp(true),
+      cfg_save: () => guardarPestanaActual(),
+      // Funcional: dos flechas seguidas deben avanzar dos pestañas (ver
+      // keyboard/useActiveIndex.js para el mismo problema en las listas).
+      con_tab_prev: () => setTab(actual => tabs[Math.max(0, tabs.findIndex(t => t.id === actual) - 1)].id),
+      con_tab_next: () => setTab(actual => tabs[Math.min(tabs.length - 1, tabs.findIndex(t => t.id === actual) + 1)].id),
+      cfg_export_keys: () => exportarTeclas(),
+      cfg_import_keys: () => importKeysRef.current?.click(),
+      cfg_reset_keys: () => handleResetShortcuts(),
+    },
+  })
+
   return (
     <div className="accounting-page">
       <div className="page-header">
         <h2>Configuración</h2>
         <div className="header-actions">
+          <button className="btn btn-sm btn-primary" onClick={guardarPestanaActual}>Guardar <kbd>F4</kbd></button>
         </div>
       </div>
 
@@ -440,9 +527,33 @@ export default function Settings({ user }) {
 
       {tab === 'appearance' && (
         <div className="card" style={{maxWidth:'450px', padding:'1.5rem'}}>
-          <h3 style={{marginTop:0}}>Apariencia</h3>
+          <h3 style={{marginTop:0}}>Estética</h3>
           <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
-            Elige cómo se ve la aplicación. Se guarda en este dispositivo.
+            La vista clásica está pensada para trabajar horas seguidas: más densa,
+            cuadrada y sin adornos, con más renglones visibles por pantalla. La
+            moderna es la de siempre. Se guarda en este dispositivo y también se
+            puede cambiar desde la barra superior.
+          </p>
+          <div style={{display:'flex', gap:'0.75rem', marginBottom:'1.5rem'}}>
+            <button
+              className={`btn ${skin === SKINS.MODERNO ? 'btn-primary' : 'btn-outline'}`}
+              style={{flex:1}}
+              onClick={() => setSkinState(setSkin(SKINS.MODERNO))}
+            >
+              ◱ Moderno
+            </button>
+            <button
+              className={`btn ${skin === SKINS.ENTERPRISE ? 'btn-primary' : 'btn-outline'}`}
+              style={{flex:1}}
+              onClick={() => setSkinState(setSkin(SKINS.ENTERPRISE))}
+            >
+              ▤ Clásico
+            </button>
+          </div>
+
+          <h3>Tema</h3>
+          <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
+            Claro u oscuro. Funciona con cualquiera de las dos estéticas.
           </p>
           <div style={{display:'flex', gap:'0.75rem'}}>
             <button
@@ -465,6 +576,13 @@ export default function Settings({ user }) {
           <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'0.75rem'}}>
             Se aplican en toda la app (barra de navegación, botones, alertas) para todos los usuarios. Elige un tema listo o afina cada color.
           </p>
+          {skin === SKINS.ENTERPRISE && (
+            <div className="alert alert-warning" style={{cursor:'default'}}>
+              La vista clásica usa a propósito una paleta neutra: el color solo aparece
+              cuando significa algo (azul acción, verde éxito, naranja aviso, rojo error).
+              Estos colores se guardan, pero se verán al volver a la vista moderna.
+            </div>
+          )}
 
           <label style={{fontWeight:600, fontSize:'0.9rem'}}>Temas listos</label>
           <div style={{display:'flex', flexWrap:'wrap', gap:'0.5rem', margin:'0.4rem 0 1.2rem'}}>
@@ -545,33 +663,67 @@ export default function Settings({ user }) {
       )}
 
       {tab === 'shortcuts' && (
-        <div className="card" style={{maxWidth:'550px', padding:'1.5rem'}}>
-          <h3 style={{marginTop:0}}>Atajos de Teclado</h3>
+        <div className="card" style={{maxWidth:'760px', padding:'1.5rem'}}>
+          <h3 style={{marginTop:0}}>Teclas del sistema</h3>
           <p style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'1rem'}}>
-            Los de navegación funcionan en cualquier pantalla. Los del punto de venta solo aplican estando ahí. Haz clic en "Cambiar" y presiona la tecla que quieras: puede ser cualquiera (una letra, un número, Enter, Supr, Inicio, F1-F12, o Ctrl/Alt + una tecla). Escape cancela.
+            Esta pantalla se genera sola del registro de acciones: cada función del sistema
+            aparece aquí con su tecla real, agrupada por sección. Pulsa "Cambiar" y luego la
+            tecla que quieras (cualquiera: letra, número, Enter, Supr, F1-F12, o Ctrl/Alt +
+            una tecla). Esc cancela.
           </p>
           <p style={{fontSize:'0.8rem', color:'var(--warning-dark)', marginBottom:'1rem'}}>
-            Recomendación: usa teclas F1-F12 o combinaciones con Ctrl para el punto de venta. Si asignas una letra o número suelto, podría activarse al escanear un código de barras.
+            Evita letras y números sueltos para el punto de venta: podrían dispararse al
+            escanear un código de barras.
           </p>
-          <table className="table">
-            <thead><tr><th>Acción</th><th>Tecla</th><th></th></tr></thead>
-            <tbody>
-              {Object.keys(DEFAULT_SHORTCUTS).map(id => (
-                <tr key={id}>
-                  <td>{shortcuts[id].label}</td>
-                  <td><strong>{capturingShortcut === id ? 'Presiona una tecla...' : keyLabel(shortcuts[id].key)}</strong></td>
-                  <td>
-                    <button className="btn btn-sm btn-outline" onClick={() => setCapturingShortcut(id)} disabled={capturingShortcut === id}>
-                      Cambiar
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="modal-actions" style={{justifyContent:'flex-start', paddingLeft:0}}>
-            <button className="btn btn-secondary btn-sm" onClick={handleResetShortcuts}>Restablecer todos</button>
+
+          <div className="filters" style={{marginBottom:'0.75rem'}}>
+            <input type="text" className="input" placeholder="Filtrar por nombre de función..."
+              value={filtroTeclas} onChange={e => setFiltroTeclas(e.target.value)} />
+            <button className="btn btn-sm btn-outline" onClick={exportarTeclas}>Exportar JSON</button>
+            <button className="btn btn-sm btn-outline" onClick={() => importKeysRef.current?.click()}>Importar JSON</button>
+            <input ref={importKeysRef} type="file" accept=".json" style={{display:'none'}} onChange={importarTeclas} />
+            <button className="btn btn-sm btn-secondary" onClick={handleResetShortcuts}>Restablecer todo</button>
           </div>
+
+          {Object.entries(accionesPorGrupo).map(([grupo, acciones]) => (
+            <div key={grupo} style={{marginBottom:'1rem'}}>
+              <h4 style={{margin:'0 0 0.25rem'}}>{grupo}</h4>
+              <table className="table">
+                <thead><tr><th>Función</th><th style={{width:170}}>Tecla</th><th style={{width:110}}></th></tr></thead>
+                <tbody>
+                  {acciones.map(a => {
+                    const teclas = keysFor(a.id)
+                    const aviso = teclas.map(k => keyWarning(k)).find(Boolean)
+                    return (
+                      <tr key={a.id}>
+                        <td>
+                          <strong>{a.nombre}</strong>
+                          <div className="text-muted" style={{fontSize:'0.78rem'}}>{a.descripcion}</div>
+                          {aviso && (
+                            <div style={{fontSize:'0.75rem', color: aviso.level === 'error' ? 'var(--danger)' : 'var(--warning-dark)'}}>
+                              {aviso.level === 'error' ? '⛔' : '⚠'} {aviso.text}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          {capturingShortcut === a.id
+                            ? <strong>Presiona una tecla…</strong>
+                            : teclas.length
+                              ? teclas.map(k => <kbd key={k} style={{marginRight:'0.25rem'}}>{keyLabel(k)}</kbd>)
+                              : <span className="text-muted">sin tecla</span>}
+                        </td>
+                        <td>
+                          <button className="btn btn-sm btn-outline" onClick={() => setCapturingShortcut(a.id)} disabled={capturingShortcut === a.id}>
+                            Cambiar
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
         </div>
       )}
 
@@ -834,6 +986,13 @@ export default function Settings({ user }) {
           </div>
         </div>
       )}
+
+      {showKeyboardHelp && (
+        <KeyHelpSheet state={STATES.CONFIGURACION} role={user?.role} titulo="Teclas de Configuración"
+          onClose={() => setShowKeyboardHelp(false)} />
+      )}
+
+      <HelpBar state={showKeyboardHelp ? STATES.MODAL : STATES.CONFIGURACION} role={user?.role} />
     </div>
   )
 }

@@ -17,8 +17,12 @@ import AdminLayout from './components/AdminLayout'
 import ProtectedRoute from './components/ProtectedRoute'
 import PredictionsPage from './components/PredictionsPage'
 import Purchases from './components/Purchases'
-import { getShortcuts, matchesShortcut } from './shortcuts'
+import GlobalKeys from './keyboard/GlobalKeys'
+// Orden obligatorio: tokens (variables) → componentes → capa de estética
+// clásica, que sobreescribe lo que no se puede expresar como variable.
+import './styles/tokens.css'
 import './styles/app.css'
+import './styles/enterprise.css'
 
 function formatMoney(n) {
   return '$' + parseFloat(n || 0).toFixed(2)
@@ -57,53 +61,28 @@ export default function App() {
     return () => { cancelled = true; clearInterval(interval); window.removeEventListener('online', check) }
   }, [])
 
+  // Enter activa el botón que tiene el foco. Antes, este mismo manejador
+  // secuestraba TODAS las flechas para saltar de botón en botón, lo que hacía
+  // imposible el principio "toda lista se navega con ↑↓": las flechas nunca
+  // llegaban a la lista. Ahora las flechas son de las secciones (ver
+  // keyboard/registry.js) y aquí solo queda el Enter sobre un botón enfocado,
+  // que no compite con nada.
   useEffect(() => {
     const handler = (e) => {
-      const { key, code } = e
-      const isNumpadArrow = (code === 'Numpad8' || code === 'Numpad4' || code === 'Numpad2' || code === 'Numpad6')
-      const isRegularArrow = (key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight')
-      const isArrow = isRegularArrow || (isNumpadArrow && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))
-      if (isArrow) {
-        e.preventDefault()
-        const focusable = Array.from(document.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])'))
-          .filter(el => el.tabIndex !== -1 && el.offsetParent !== null)
-        const current = focusable.indexOf(document.activeElement)
-        const isPrev = (key === 'ArrowUp' || key === 'ArrowLeft' || code === 'Numpad8' || code === 'Numpad4')
-        const next = isPrev
-          ? (current <= 0 ? focusable.length - 1 : current - 1)
-          : (current >= focusable.length - 1 ? 0 : current + 1)
-        focusable[next]?.focus()
-      } else if (key === 'Enter' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
-        e.preventDefault()
-        document.activeElement?.click()
-      }
+      if (e.defaultPrevented) return
+      if (e.key !== 'Enter') return
+      const el = document.activeElement
+      if (!el || el.tagName !== 'BUTTON') return
+      e.preventDefault()
+      el.click()
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
-  // Atajos de navegación: funcionan en CUALQUIER pantalla (antes vivían
-  // solo dentro de POS.jsx, así que por ejemplo F5 no hacía nada estando en
-  // Contabilidad). Las acciones específicas del POS (buscar, cobrar,
-  // cliente/fiado, historial) se manejan aparte, dentro de POS.jsx, porque
-  // solo tienen sentido ahí.
-  useEffect(() => {
-    const onKeyDown = (e) => {
-      const tag = e.target.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      const shortcuts = getShortcuts()
-      for (const id of Object.keys(shortcuts)) {
-        if (!id.startsWith('nav_')) continue
-        if (matchesShortcut(e, shortcuts[id])) {
-          e.preventDefault()
-          window.location.hash = shortcuts[id].hash
-          return
-        }
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  // La navegación entre secciones ya no vive aquí: la resuelve el registro de
+  // acciones a través de <GlobalKeys>, que además da paleta y ayuda en
+  // cualquier pantalla, incluso con recuadros abiertos.
 
   const loadPalette = () => {
     settingsApi.getPalette()
@@ -193,6 +172,7 @@ export default function App() {
     <ErrorBoundary>
     <HashRouter>
       {user && <LogoWatermark />}
+      {user && <GlobalKeys role={user.role} />}
       <ConfirmDialogHost />
       {!isOnline && (
         <div className="offline-banner">

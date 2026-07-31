@@ -1,75 +1,15 @@
 /* ============================================
-   Sistema Tienda de Abarrotes - Estilos
-   Moderno, limpio, intuitivo y táctil
-   ============================================ */
+   Sistema Tienda de Abarrotes - Componentes
+   ============================================
 
-:root {
-  --primary: #2563eb;
-  --primary-light: #3b82f6;
-  --primary-dark: #1d4ed8;
-  --success: #16a34a;
-  --success-light: #22c55e;
-  --success-dark: #15803d;
-  --danger: #dc2626;
-  --danger-light: #ef4444;
-  --danger-dark: #b91c1c;
-  --warning: #f59e0b;
-  --warning-dark: #d97706;
-  --bg: #f1f5f9;
-  --bg-card: #ffffff;
-  --bg-hover: #f8fafc;
-  --bg-accent: #f0f7ff;
-  --input-bg: #ffffff;
-  --text: #1e293b;
-  --text-secondary: #64748b;
-  --text-muted: #94a3b8;
-  --border: #e2e8f0;
-  --border-light: #f1f5f9;
-  --header-bg: #1e293b;
-  --header-text: #ffffff;
-  --radius: 8px;
-  --radius-sm: 6px;
-  --radius-lg: 12px;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
-  --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
-  --shadow-lg: 0 10px 25px rgba(0,0,0,0.1), 0 4px 10px rgba(0,0,0,0.06);
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-}
+   Los COLORES, ESPACIADOS, TIPOGRAFÍA y DENSIDAD viven en tokens.css, no
+   aquí. Este archivo solo describe componentes en términos de esas
+   variables, y por eso las dos estéticas (moderno / enterprise) comparten
+   exactamente el mismo marcado y las mismas clases: lo único que cambia es
+   el valor de los tokens. Las diferencias que no se pueden expresar como
+   token (bordes de rejilla, pestañas clásicas, etc.) están en enterprise.css.
 
-/* El toggle en Configuración escribe data-theme="dark"/"light" en <html>
-   (persistido en localStorage) — ver App.jsx. El resto del CSS ya estaba
-   construido casi enteramente sobre estas variables, así que el tema
-   oscuro es sobre todo redefinirlas aquí. */
-:root[data-theme="dark"] {
-  --primary: #3b82f6;
-  --primary-light: #60a5fa;
-  --primary-dark: #2563eb;
-  --success: #22c55e;
-  --success-light: #4ade80;
-  --success-dark: #16a34a;
-  --danger: #f87171;
-  --danger-light: #fca5a5;
-  --danger-dark: #ef4444;
-  --warning: #fbbf24;
-  --warning-dark: #f59e0b;
-  --bg: #0f172a;
-  --bg-card: #1e293b;
-  --bg-hover: #26334a;
-  --bg-accent: rgba(59,130,246,0.15);
-  --input-bg: #17223a;
-  --text: #e2e8f0;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --border: #334155;
-  --border-light: #293548;
-  --header-bg: #0a0f1d;
-  --header-text: #e2e8f0;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-  --shadow: 0 1px 3px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.3);
-  --shadow-md: 0 4px 6px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.3);
-  --shadow-lg: 0 10px 25px rgba(0,0,0,0.45), 0 4px 10px rgba(0,0,0,0.3);
-}
+   Orden de carga: tokens.css → app.css → enterprise.css (ver App.jsx). */
 
 :root[data-theme="dark"] .row-warning { background: rgba(245,158,11,0.15) !important; }
 :root[data-theme="dark"] .alert-error { background: rgba(248,113,113,0.12); border-color: rgba(248,113,113,0.3); }
@@ -87,7 +27,7 @@
 
 html, body {
   font-family: var(--font);
-  font-size: 14px;
+  font-size: var(--font-size-base);
   color: var(--text);
   background: var(--bg);
   line-height: 1.5;
@@ -148,9 +88,9 @@ html, body {
 .form-group { margin-bottom: 1rem; }
 .form-group label { display: block; font-weight: 600; margin-bottom: 0.35rem; font-size: 0.85rem; color: var(--text-secondary); }
 input, select, textarea {
-  width: 100%; padding: 0.6rem 0.8rem; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  width: 100%; padding: var(--input-pad-y) var(--input-pad-x); border: var(--border-w) solid var(--border); border-radius: var(--radius-sm);
   font-family: var(--font); font-size: 0.95rem; background: var(--input-bg); color: var(--text);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color var(--transition-slow), box-shadow var(--transition-slow);
   -webkit-appearance: none; appearance: none;
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
@@ -165,8 +105,8 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0.55rem 1.1rem; border: 1px solid transparent; border-radius: var(--radius-sm);
   font-family: var(--font); font-size: 0.875rem; font-weight: 600;
-  cursor: pointer; transition: all 0.15s; white-space: nowrap;
-  min-height: 38px; user-select: none; gap: 0.35rem;
+  cursor: pointer; transition: all var(--transition); white-space: nowrap;
+  min-height: var(--control-h); user-select: none; gap: 0.35rem;
 }
 .btn:active { transform: scale(0.97); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
@@ -182,8 +122,8 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 .btn-warning:hover:not(:disabled) { background: var(--warning-dark); border-color: var(--warning-dark); }
 .btn-outline { background: transparent; color: var(--text-secondary); border: 1.5px solid var(--border); }
 .btn-outline:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--primary); color: var(--primary); }
-.btn-sm { padding: 0.3rem 0.65rem; font-size: 0.8rem; min-height: 30px; border-radius: var(--radius-sm); }
-.btn-lg { padding: 0.75rem 1.4rem; font-size: 1.05rem; min-height: 46px; border-radius: var(--radius); }
+.btn-sm { padding: 0.3rem 0.65rem; font-size: 0.8rem; min-height: var(--control-h-sm); border-radius: var(--radius-sm); }
+.btn-lg { padding: 0.75rem 1.4rem; font-size: 1.05rem; min-height: var(--control-h-lg); border-radius: var(--radius); }
 .btn-block { width: 100%; }
 .btn-icon { padding: 0.5rem; min-width: 38px; justify-content: center; }
 
@@ -261,6 +201,9 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   font-size: 0.85rem; color: var(--text); min-height: 38px;
 }
 .more-menu button:hover { background: var(--bg-hover); }
+/* El atajo, en gris a la derecha: se aprende la tecla usando el mouse. */
+.more-menu button { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; }
+.menu-key { color: var(--text-muted); font-size: 0.78rem; font-weight: 600; }
 
 .offline-banner {
   position: sticky; top: 0; z-index: 2000; background: var(--warning-dark); color: #fff;
@@ -303,20 +246,27 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 .cart-empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); font-size: 0.95rem; padding: 3rem 2rem; }
 .cart-table-wrap { flex: 1; overflow-y: auto; }
 .cart-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.cart-table th { padding: 0.5rem 0.6rem; text-align: left; background: var(--bg-hover); font-weight: 600; position: sticky; top: 0; font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.3px; }
-.cart-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-light); vertical-align: middle; }
+.cart-table th { padding: var(--cell-y) var(--cell-x); text-align: left; background: var(--bg-hover); font-weight: 600; position: sticky; top: 0; font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.3px; }
+.cart-table td { padding: var(--cell-y) var(--cell-x); border-bottom: 1px solid var(--border-light); vertical-align: middle; }
 .qty-input, .price-input, .disc-input { width: 100%; min-width: 55px; padding: 0.3rem 0.4rem; text-align: center; font-size: 0.85rem; border: 1px solid var(--border); border-radius: 4px; }
 .qty-input:focus, .price-input:focus, .disc-input:focus { border-color: var(--primary); }
 .subtotal-cell { font-weight: 700; text-align: right; color: var(--text); }
 .customer-badge { background: #dcfce7; color: var(--success-dark); padding: 0.2rem 0.6rem; border-radius: 20px; font-size: 0.78rem; font-weight: 600; }
 .unit-label { font-size: 0.75rem; color: var(--text-muted); margin-left: 0.25rem; }
 
-/* POS Summary */
-.pos-summary { background: var(--bg-card); border-radius: var(--radius); padding: 1rem 1.2rem; box-shadow: var(--shadow); }
-.summary-row { display: flex; justify-content: space-between; align-items: center; padding: 0.45rem 0; font-size: 0.9rem; }
-.summary-row span:last-child { font-weight: 600; }
-.total-row { border-top: 2px solid var(--text); margin-top: 0.4rem; padding-top: 0.7rem; font-size: 1.25rem; font-weight: 800; color: var(--text); }
-.total-row span:last-child { color: var(--success); }
+/* POS Summary — el bloque de dinero del ticket (ver ESCALA DE DINERO al final).
+   Ojo: este bloque NO usa .total-row. Esa clase la define también la sección de
+   Compras más abajo con font-size 0.9rem, y al ser la última en el archivo
+   ganaba: el TOTAL del POS terminaba más pequeño de lo que decía su regla. */
+.pos-summary { background: var(--bg-card); border-radius: var(--radius); padding: var(--panel-pad) 1.2rem; box-shadow: var(--shadow); }
+.summary-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; padding: 0.3rem 0; font-size: 0.9rem; }
+.summary-row > span:first-child { color: var(--text-secondary); }
+.summary-row .money { font-size: var(--money-sub); }
+/* El TOTAL no comparte renglón con su etiqueta: a esta escala no caben los dos
+   en el panel de 340px, y partir la cifra en dos líneas sería peor. */
+.summary-total { border-top: 2px solid var(--text); margin-top: 0.5rem; padding-top: 0.4rem; display: flex; flex-direction: column; }
+.summary-total-label { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; color: var(--text-secondary); text-transform: uppercase; }
+.summary-total .money-total { align-self: flex-end; color: var(--success); }
 .discount-input { width: 100px; text-align: right; padding: 0.3rem 0.5rem; font-size: 0.85rem; border: 1px solid var(--border); border-radius: 4px; }
 .discount-input:focus { border-color: var(--primary); }
 
@@ -372,7 +322,7 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 .payment-row { display: flex; gap: 0.5rem; align-items: center; }
 .payment-row select { flex: 1; }
 .payment-row input { flex: 1; }
-.payment-summary { padding: 0.8rem 0; border-top: 1px solid var(--border-light); margin-top: 0.8rem; }
+.payment-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 0.6rem 0; border-top: 1px solid var(--border-light); margin-top: 0.8rem; }
 .change-amount { color: var(--success); font-weight: 700; font-size: 1.05rem; }
 .due-amount { color: var(--danger); font-weight: 700; font-size: 1.05rem; }
 
@@ -411,16 +361,20 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   box-shadow: var(--shadow); font-size: 0.85rem; overflow: hidden;
 }
 .table th {
-  background: var(--bg-hover); padding: 0.55rem 0.7rem; text-align: left; font-weight: 600;
+  background: var(--bg-hover); padding: var(--cell-y) var(--cell-x); text-align: left; font-weight: 600;
   white-space: nowrap; border-bottom: 1px solid var(--border);
   font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.3px;
 }
-.table td { padding: 0.45rem 0.7rem; border-bottom: 1px solid var(--border-light); vertical-align: middle; }
+.table td { padding: var(--cell-y) var(--cell-x); border-bottom: 1px solid var(--border-light); vertical-align: middle; }
 .table tr:last-child td { border-bottom: none; }
 .table tr:hover { background: var(--bg-hover); }
 .table-sm { font-size: 0.78rem; }
 .row-warning { background: #fffbeb !important; }
 .row-selected { background: var(--bg-accent) !important; }
+/* Renglón activo de una lista navegable con ↑↓: barra lateral, no solo color,
+   para que se distinga de "marcado" (row-selected) y del aviso de stock. */
+.row-active > td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.row-active > td { background: var(--bg-hover); }
 .bulk-row label { font-weight: 500; }
 .row-cancelled { opacity: 0.5; }
 
@@ -633,6 +587,27 @@ code { background: var(--bg-hover); padding: 0.15rem 0.4rem; border-radius: 4px;
 .state-captura { background: var(--success); color: #fff; }
 .state-cobro   { background: var(--warning); color: #3b2600; }
 .state-cambio  { background: var(--primary); color: #fff; }
+/* Compras: el color agrupa por naturaleza del estado — verde mientras se
+   captura, ámbar cuando hay que decidir, azul cuando toca dinero. */
+.state-proveedor  { background: var(--text-secondary); color: #fff; }
+.state-pedido     { background: var(--success); color: #fff; }
+.state-confirmar  { background: var(--warning); color: #3b2600; }
+.state-pendientes { background: var(--text-secondary); color: #fff; }
+.state-recepcion  { background: var(--primary); color: #fff; }
+.state-porpagar   { background: var(--danger); color: #fff; }
+.state-abono      { background: var(--primary); color: #fff; }
+.state-busqueda   { background: var(--text-muted); color: #fff; }
+
+/* --- Compras: espacio de trabajo del pedido (mismo esqueleto que el POS) --- */
+.order-workspace { display: flex; gap: var(--gap); align-items: stretch; }
+.order-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.order-main .cart-section { flex: 1; }
+.confirm-panel .confirm-row { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: 0.15rem 0; }
+.confirm-panel .confirm-row span { color: var(--text-secondary); font-size: 0.85rem; }
+@media (max-width: 900px) {
+  .order-workspace { flex-direction: column; }
+  .order-workspace .pos-right { width: 100%; }
+}
 
 /* --- Cambio a devolver: media pantalla, alto contraste --- */
 .change-hero {
@@ -641,7 +616,7 @@ code { background: var(--bg-hover); padding: 0.15rem 0.4rem; border-radius: 4px;
   background: var(--primary); color: #fff; border-radius: var(--radius-lg);
 }
 .change-hero-label { font-size: 1.1rem; opacity: 0.9; letter-spacing: 0.1em; font-weight: 700; }
-.change-hero-amount { font-size: clamp(3.5rem, 13vw, 8rem); font-weight: 900; line-height: 1; }
+.change-hero-amount { font-size: var(--money-hero); font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
 .change-hero-hint { font-size: 0.9rem; opacity: 0.85; }
 
 /* --- Línea de comando --- */
@@ -690,6 +665,52 @@ code { background: var(--bg-hover); padding: 0.15rem 0.4rem; border-radius: 4px;
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 .toast-success { background: var(--success); color: #fff; }
 .toast-error { background: var(--danger); color: #fff; }
+
+/* ============================================================
+   ESCALA DE DINERO
+   En un POS comercial el importe es lo único que el cajero mira de reojo,
+   desde un metro y mientras cuenta billetes. Por eso el dinero tiene su
+   propia escala tipográfica, muy por encima del texto de interfaz, y
+   SIEMPRE cifras de ancho fijo (tabular-nums): sin eso, el total "baila"
+   horizontalmente cada vez que cambia un dígito y obliga a releerlo.
+   Los tamaños viven en tokens.css y suben todavía más en la estética
+   enterprise.
+   ============================================================ */
+.money {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.money-line { font-size: var(--money-line); }
+.money-sub { font-size: var(--money-sub); }
+.money-pay { font-size: var(--money-pay); font-weight: 800; line-height: 1.1; }
+.money-total { font-size: var(--money-total); font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; }
+.money-hero { font-size: var(--money-hero); font-weight: 900; line-height: 1; }
+
+/* Importes dentro del ticket: a la derecha, ancho fijo, legibles de un vistazo */
+.cart-table .subtotal-cell { font-size: var(--money-line); font-variant-numeric: tabular-nums; }
+.cart-table .price-cell { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Campo de captura de dinero (cobro, abonos, conteo de caja): la cifra que se
+   teclea se ve tan grande como la que hay que cobrar. */
+.input-money {
+  font-size: var(--money-sub); font-weight: 700; text-align: right;
+  font-variant-numeric: tabular-nums; padding: 0.35rem 0.6rem;
+}
+
+/* Botón de cobrar: acción y monto en el mismo control, sin paréntesis. El
+   importe va a la derecha, donde ya está la vista después de leer el total. */
+.btn-cobrar { justify-content: space-between; gap: 1rem; padding-left: 1rem; padding-right: 1rem; }
+.btn-cobrar .money { font-size: var(--money-sub); }
+
+/* Resumen de la pantalla de cobro */
+.pay-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.6rem 0; }
+.pay-figure { display: flex; flex-direction: column; }
+.pay-figure-label { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
+.pay-figure .money { color: var(--text); }
+.pay-figure-change .money { color: var(--success); }
+.pay-figure-due .money { color: var(--danger); }
 
 /* --- Vista previa del ticket: monoespaciada, idéntica al papel --- */
 .ticket-preview {
